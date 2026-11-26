@@ -33,6 +33,8 @@ const ALLOWED: Record<string, { ext: string; kind: 'image' | 'video' | 'audio' |
   'audio/mp4': { ext: 'm4a', kind: 'audio' },
   'audio/wav': { ext: 'wav', kind: 'audio' },
   'audio/x-wav': { ext: 'wav', kind: 'audio' },
+  // Files of private conversations arrive already encrypted: opaque bytes, always downloaded.
+  'application/octet-stream': { ext: 'bin', kind: 'file' },
   'application/pdf': { ext: 'pdf', kind: 'file' },
   'text/plain': { ext: 'txt', kind: 'file' },
   'application/zip': { ext: 'zip', kind: 'file' },
@@ -99,6 +101,9 @@ router.post('/reports', requireAuth, (req, res) => {
       targetId: z.number().int().positive(),
       reason: z.enum(['spam', 'harassment', 'hate', 'scam', 'illegal', 'other']),
       details: z.string().trim().max(1000).default(''),
+      // For an encrypted message: the text as decrypted on the reporter's device,
+      // which they choose to disclose to the moderators.
+      evidence: z.string().trim().max(500).optional(),
     }),
     req.body,
   );
@@ -110,7 +115,7 @@ router.post('/reports', requireAuth, (req, res) => {
       const chat = getChat(m.chat_id);
       // A private conversation can only be reported by one of its two members.
       if (chat.type === 'dm' && !getMembership(chat.id, user.id)) throw new HttpError(403, 'forbidden');
-      snapshot = (m.text || m.type).slice(0, 500);
+      snapshot = m.enc ? (body.evidence ?? '🔒') : (m.text || m.type).slice(0, 500);
     }
   } else if (body.targetType === 'story') {
     snapshot = ((db.prepare('SELECT text FROM stories WHERE id = ?').get(body.targetId) as { text: string } | undefined)?.text ?? '').slice(0, 500);
@@ -157,7 +162,7 @@ router.get('/admin/reports', requireAuth, (req, res) => {
     let chatId: number | null = null;
     if (r.target_type === 'message') {
       const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(r.target_id) as MessageRow | undefined;
-      excerpt = m && !m.deleted_at ? m.text || m.type : `🚫 ${r.snapshot}`.trim();
+      excerpt = m && !m.deleted_at ? (m.enc ? `🔒 ${r.snapshot}` : m.text || m.type) : `🚫 ${r.snapshot}`.trim();
       chatId = m?.chat_id ?? null;
     } else if (r.target_type === 'user') {
       const u = getUser(r.target_id);

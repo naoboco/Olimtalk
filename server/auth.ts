@@ -26,16 +26,47 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 
-export function createSession(userId: number): string {
+export function createSession(userId: number, userAgent = ''): string {
   const token = crypto.randomBytes(32).toString('base64url');
   const t = now();
-  db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?,?,?,?)').run(
+  db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at, id, user_agent, last_used) VALUES (?,?,?,?,?,?,?)').run(
     sha(token),
     userId,
     t,
     t + SESSION_TTL,
+    crypto.randomBytes(9).toString('base64url'),
+    userAgent.slice(0, 300),
+    t,
   );
   return token;
+}
+
+export interface SessionInfo {
+  id: string;
+  userAgent: string;
+  createdAt: number;
+  lastUsed: number;
+  current: boolean;
+}
+
+/** The devices signed in to an account, most recently used first. */
+export function listSessions(userId: number, currentToken: string | undefined): SessionInfo[] {
+  const current = currentToken ? sha(currentToken) : '';
+  const rows = db
+    .prepare('SELECT id, token_hash, user_agent, created_at, last_used FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_used DESC')
+    .all(userId, now()) as { id: string | null; token_hash: string; user_agent: string; created_at: number; last_used: number }[];
+  return rows.map((r) => ({
+    id: r.id ?? r.token_hash.slice(0, 12),
+    userAgent: r.user_agent,
+    createdAt: r.created_at,
+    lastUsed: r.last_used || r.created_at,
+    current: r.token_hash === current,
+  }));
+}
+
+/** Sign one device out. Returns false when it does not belong to this account. */
+export function revokeSession(userId: number, id: string): boolean {
+  return db.prepare('DELETE FROM sessions WHERE user_id = ? AND (id = ? OR substr(token_hash, 1, 12) = ?)').run(userId, id, id).changes > 0;
 }
 
 export function destroySession(token: string) {
@@ -55,6 +86,8 @@ export function userFromToken(token: string | undefined): UserRow | undefined {
        WHERE s.token_hash = ? AND s.expires_at > ? AND u.banned = 0`,
     )
     .get(sha(token), now()) as UserRow | undefined;
+  // Remember when each device was last active (at most one write every few minutes).
+  if (row) db.prepare('UPDATE sessions SET last_used = ? WHERE token_hash = ? AND last_used < ?').run(now(), sha(token), now() - 5 * 60_000);
   return row;
 }
 

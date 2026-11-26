@@ -5,6 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { io as ioClient, type Socket } from 'socket.io-client';
+import nodemailer from 'nodemailer';
+import {
+  decryptMessage,
+  deriveSecrets,
+  encryptMessage,
+  fromBase64,
+  generateIdentity,
+  unseal,
+  unsealJson,
+  unwrapPrivateKey,
+  wrapPrivateKey,
+} from '../../shared/e2e.ts';
 import type { Chat, Community, Me, Message, StoryGroup } from '../../shared/types.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'olimtalk-test-'));
@@ -12,6 +24,10 @@ process.env.DATA_DIR = dir;
 process.env.OLIMTALK_NO_LISTEN = '1';
 process.env.ADMIN_EMAILS = 'admin@example.com';
 process.env.AUTH_RATE_LIMIT = '1000';
+process.env.MAIL_DOMAIN = 'in.olimtalk.test';
+process.env.INBOUND_MAIL_SECRET = 'test-inbound-secret';
+process.env.SMTP_PORT = '0'; // any free port
+process.env.ICS_ALLOW_PRIVATE = '1'; // lets the calendar reader reach the local test server
 
 let base = '';
 let close: () => Promise<void>;
@@ -39,6 +55,7 @@ class Client {
   get = <T = any>(url: string, expect?: number) => this.req<T>('GET', url, undefined, expect);
   post = <T = any>(url: string, body: unknown = {}, expect?: number) => this.req<T>('POST', url, body, expect);
   patch = <T = any>(url: string, body: unknown = {}, expect?: number) => this.req<T>('PATCH', url, body, expect);
+  put = <T = any>(url: string, body: unknown = {}, expect?: number) => this.req<T>('PUT', url, body, expect);
   del = <T = any>(url: string, expect?: number) => this.req<T>('DELETE', url, undefined, expect);
 
   static async register(name: string, extra: Record<string, unknown> = {}): Promise<Client> {
@@ -58,17 +75,30 @@ class Client {
 }
 
 const once = <T>(s: Socket, event: string) => new Promise<T>((resolve) => s.once(event, resolve));
+/** The server treats ciphertext as opaque: any long-enough string stands in for it here. */
+const ENC = (label: string) => JSON.stringify({ v: 1, opaque: label.padEnd(24, '.') });
 
 let alice: Client;
 let bob: Client;
 let admin: Client;
+let smtpPort = 0;
 
 before(async () => {
   const mod = await import('../index.ts');
   await new Promise<void>((resolve) => mod.server.listen(0, resolve));
   const addr = mod.server.address();
   base = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
-  close = () => new Promise((resolve) => mod.server.close(() => resolve()));
+  close = () =>
+    new Promise((resolve) => {
+      mod.smtp?.close(() => undefined);
+      mod.server.close(() => resolve());
+    });
+  // The built-in mail reception listens on a free port.
+  for (let i = 0; i < 50 && !smtpPort; i++) {
+    const address = mod.smtp?.server.address();
+    if (address && typeof address === 'object') smtpPort = address.port;
+    else await new Promise((r) => setTimeout(r, 20));
+  }
   alice = await Client.register('Alice', { profile: 'student', city: 'tel-aviv' });
   bob = await Client.register('Bob', { profile: 'medical', city: 'netanya' });
   admin = await Client.register('Admin');
@@ -204,9 +234,15 @@ test('messaging: realtime delivery, reply, edit, reactions, pin, star, forward, 
     const search = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/search?q=shalom`);
     assert.equal(search.messages.length, 2);
 
-    // forward into a DM
+    // forward to another group
+    const { chat: other } = await bob.post<{ chat: Chat }>('/api/chats', { name: 'Autre groupe' }, 201);
+    await bob.post(`/api/messages/${first.id}/forward`, { chatIds: [other.id] });
+    const otherHistory = await bob.get<{ messages: Message[] }>(`/api/chats/${other.id}/messages`);
+    assert.equal(otherHistory.messages.at(-1)!.forwarded, true);
+    // The server cannot write into an encrypted conversation: the device does it, re-encrypted.
     const dm = await bob.post<{ chat: Chat }>('/api/dm', { userId: alice.me.id });
-    await bob.post(`/api/messages/${first.id}/forward`, { chatIds: [dm.chat.id] });
+    await bob.post(`/api/messages/${first.id}/forward`, { chatIds: [dm.chat.id] }, 400);
+    await bob.post(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('transféré'), forwarded: true }, 201);
     const dmHistory = await alice.get<{ messages: Message[] }>(`/api/chats/${dm.chat.id}/messages`);
     assert.equal(dmHistory.messages[0]!.forwarded, true);
     // DMs are private.
@@ -336,7 +372,7 @@ test('direct messages, blocking and read receipts', async () => {
   const bobSocket = await bob.socket();
   try {
     const incoming = once<Message>(bobSocket, 'message:new');
-    const { message } = await carol.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { text: 'Salut Bob' }, 201);
+    const { message } = await carol.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('Salut Bob') }, 201);
     assert.equal((await incoming).id, message.id);
     const carolSocket = await carol.socket();
     const read = once<{ lastReadId: number; userId: number }>(carolSocket, 'read');
@@ -347,9 +383,9 @@ test('direct messages, blocking and read receipts', async () => {
     bobSocket.close();
   }
   await bob.post(`/api/users/${carol.me.id}/block`);
-  await carol.post(`/api/chats/${dm.chat.id}/messages`, { text: 'Tu es là ?' }, 403);
+  await carol.post(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('Tu es là ?') }, 403);
   await bob.del(`/api/users/${carol.me.id}/block`);
-  await carol.post(`/api/chats/${dm.chat.id}/messages`, { text: 'Tu es là ?' }, 201);
+  await carol.post(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('Tu es là ?') }, 201);
 });
 
 test('uploads: allowed types only, stored under a safe name, served inertly', async () => {
@@ -528,7 +564,7 @@ test('account deletion removes the person and their content, and keeps their gro
   await frank.post(`/api/chats/${chat.id}/messages`, { text: 'Message de Frank' }, 201);
   await grace.post(`/api/chats/${chat.id}/messages`, { text: 'Message de Grace' }, 201);
   const dm = await frank.post<{ chat: Chat }>('/api/dm', { userId: grace.me.id });
-  await frank.post(`/api/chats/${dm.chat.id}/messages`, { text: 'privé' }, 201);
+  await frank.post(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('privé') }, 201);
   await frank.post('/api/stories', { text: 'story de Frank' }, 201);
   // an uploaded photo that only Frank uses
   const form = new FormData();
@@ -624,9 +660,12 @@ test('reports keep what was reported; private messages can only be reported by a
   assert.equal(reports.find((r) => r.targetType === 'message' && r.targetId === message.id)!.excerpt, '🚫 insulte vite effacée');
 
   const dm = await alice.post<{ chat: Chat }>('/api/dm', { userId: bob.me.id });
-  const { message: secret } = await alice.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { text: 'confidentiel' }, 201);
+  const { message: secret } = await alice.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('confidentiel') }, 201);
   await admin.post('/api/reports', { targetType: 'message', targetId: secret.id, reason: 'other' }, 403);
-  await bob.post('/api/reports', { targetType: 'message', targetId: secret.id, reason: 'other' }, 201);
+  // The server cannot read it: the reporter chooses to disclose what their device decrypted.
+  await bob.post('/api/reports', { targetType: 'message', targetId: secret.id, reason: 'other', evidence: 'texte déchiffré par Bob' }, 201);
+  const again = await admin.get<{ reports: { targetId: number; targetType: string; excerpt: string }[] }>('/api/admin/reports');
+  assert.equal(again.reports.find((r) => r.targetType === 'message' && r.targetId === secret.id)!.excerpt, '🔒 texte déchiffré par Bob');
 });
 
 test('store requirements: public privacy policy, terms and app links', async () => {
@@ -640,4 +679,318 @@ test('store requirements: public privacy policy, terms and app links', async () 
   }
   const config = (await (await fetch(base + '/api/config')).json()) as { appStoreUrl: string | null; playStoreUrl: string | null };
   assert.deepEqual([config.appStoreUrl, config.playStoreUrl], [null, null]);
+});
+
+// ───────────────────────── data protection ─────────────────────────
+
+/** A client that does what the apps do: real keys, real encryption, password never sent. */
+async function secureClient(name: string) {
+  const email = `${name.toLowerCase()}@example.com`;
+  const secrets = await deriveSecrets(email, 'mot de passe de ' + name, 1000);
+  const identity = await generateIdentity();
+  const c = new Client();
+  const r = await c.post<{ me: Me }>(
+    '/api/auth/register',
+    { email, password: secrets.authKey, name, world: 'fr', publicKey: identity.publicKey, encryptedPrivateKey: await wrapPrivateKey(identity.privateKey, secrets.wrapKey) },
+    201,
+  );
+  c.me = r.me;
+  return { c, email, secrets, identity };
+}
+
+test('end-to-end encryption: the server stores and relays private messages it cannot read', async () => {
+  const ivan = await secureClient('Ivan');
+  const judy = await secureClient('Judy');
+  assert.equal(ivan.c.me.publicKey, ivan.identity.publicKey);
+
+  // Judy gets Ivan's public key from the server, and nothing else.
+  const dm = await judy.c.post<{ chat: Chat }>('/api/dm', { userId: ivan.c.me.id });
+  assert.equal(dm.chat.peer!.publicKey, ivan.identity.publicKey);
+
+  // Plaintext is refused in a private conversation, in every form.
+  await judy.c.post(`/api/chats/${dm.chat.id}/messages`, { text: 'en clair' }, 400);
+  await judy.c.post(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('x'), text: 'et du clair à côté' }, 400);
+  await judy.c.post(`/api/chats/${dm.chat.id}/messages`, { poll: { question: 'Q ?', options: ['a', 'b'] } }, 400);
+  await judy.c.post(
+    `/api/chats/${dm.chat.id}/messages`,
+    { enc: ENC('x'), attachment: { url: '/uploads/abc.png', name: 'photo.png', size: 3, mime: 'image/png', kind: 'image' } },
+    400,
+  );
+  // …and ciphertext is refused in public groups.
+  const { chat: group } = await judy.c.post<{ chat: Chat }>('/api/chats', { name: 'Groupe public de Judy' }, 201);
+  await judy.c.post(`/api/chats/${group.id}/messages`, { enc: ENC('caché') }, 400);
+
+  const ctx = { chatId: dm.chat.id, senderId: judy.c.me.id };
+  const secretText = 'Mon numéro de teoudat zeout est 123456789';
+  const enc = await encryptMessage(judy.identity.privateKey, judy.identity.publicKey, ivan.identity.publicKey, ctx, { text: secretText });
+  const ivanSocket = await ivan.c.socket();
+  try {
+    const incoming = once<Message>(ivanSocket, 'message:new');
+    const { message } = await judy.c.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { enc }, 201);
+    const live = await incoming;
+    assert.equal(live.text, '');
+    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, live.enc!), { text: secretText });
+
+    // Nothing readable in the database, the history, the conversation list or the search.
+    const { db } = await import('../db.ts');
+    const dump = JSON.stringify(db.prepare('SELECT * FROM messages WHERE chat_id = ?').all(dm.chat.id));
+    assert.ok(!dump.includes('teoudat') && !dump.includes('123456789'));
+    const list = await ivan.c.get<{ chats: Chat[] }>('/api/chats');
+    const preview = list.chats.find((c) => c.id === dm.chat.id)!.lastMessage!;
+    assert.equal(preview.text, '');
+    assert.equal(preview.encrypted, true);
+    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, preview.enc!), { text: secretText });
+    assert.deepEqual((await ivan.c.get<{ messages: Message[] }>(`/api/chats/${dm.chat.id}/search?q=teoudat`)).messages, []);
+
+    // Editing replaces the ciphertext.
+    const edited = await encryptMessage(judy.identity.privateKey, judy.identity.publicKey, ivan.identity.publicKey, ctx, { text: 'corrigé' });
+    const patched = once<{ patch: { enc: string } }>(ivanSocket, 'message:patch');
+    await judy.c.patch(`/api/messages/${message.id}`, { text: 'en clair' }, 400);
+    await judy.c.patch(`/api/messages/${message.id}`, { enc: edited });
+    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, (await patched).patch.enc), { text: 'corrigé' });
+
+    // The server cannot forward what it cannot read.
+    await ivan.c.post(`/api/messages/${message.id}/forward`, { chatIds: [group.id] }, 400);
+
+    // Deleting erases the ciphertext too.
+    await judy.c.del(`/api/messages/${message.id}?scope=all`);
+    assert.equal((db.prepare('SELECT enc FROM messages WHERE id = ?').get(message.id) as { enc: string | null }).enc, null);
+  } finally {
+    ivanSocket.close();
+  }
+});
+
+test('keys follow the person to a new device with the password, and only with it', async () => {
+  const kate = await secureClient('Kate');
+  // New device: log in with the derived key (the password itself never travels)…
+  const phone = new Client();
+  await phone.post('/api/auth/login', { email: kate.email, password: 'mot de passe de Kate' }, 401);
+  await phone.post('/api/auth/login', { email: kate.email, password: kate.secrets.authKey });
+  // …fetch the wrapped private key, and unwrap it locally.
+  const keys = await phone.get<{ publicKey: string; encryptedPrivateKey: string }>('/api/me/keys');
+  assert.equal(keys.publicKey, kate.identity.publicKey);
+  await unwrapPrivateKey(keys.encryptedPrivateKey, kate.secrets.wrapKey);
+  const wrong = await deriveSecrets(kate.email, 'mauvais mot de passe', 1000);
+  await assert.rejects(unwrapPrivateKey(keys.encryptedPrivateKey, wrong.wrapKey));
+  // The authentication key alone (all the server ever sees) unwraps nothing.
+  assert.ok(!keys.encryptedPrivateKey.includes(kate.secrets.authKey));
+
+  // Changing the password must come with the key re-wrapped for the new one.
+  const next = await deriveSecrets(kate.email, 'nouveau mot de passe', 1000);
+  await kate.c.patch('/api/me', { password: next.authKey, currentPassword: kate.secrets.authKey }, 400);
+  await kate.c.put('/api/me/vault', { vault: 'ancien-coffre-chiffre' });
+  await kate.c.patch('/api/me', {
+    password: next.authKey,
+    currentPassword: kate.secrets.authKey,
+    encryptedPrivateKey: await wrapPrivateKey(kate.identity.privateKey, next.wrapKey),
+    vault: 'coffre-rechiffre',
+  });
+  const after = await kate.c.get<{ encryptedPrivateKey: string }>('/api/me/keys');
+  await unwrapPrivateKey(after.encryptedPrivateKey, next.wrapKey);
+  await assert.rejects(unwrapPrivateKey(after.encryptedPrivateKey, kate.secrets.wrapKey), 'the old password opens nothing any more');
+  assert.equal((await kate.c.get<{ vault: string }>('/api/me/vault')).vault, 'coffre-rechiffre');
+
+  // Resetting the encryption publishes a new key and tells the people she talks to.
+  const leo = await secureClient('Leo');
+  const dm = await leo.c.post<{ chat: Chat }>('/api/dm', { userId: kate.c.me.id });
+  const leoSocket = await leo.c.socket();
+  try {
+    const update = once<{ chatId: number }>(leoSocket, 'chat:update');
+    const fresh = await generateIdentity();
+    await kate.c.put('/api/me/keys', { publicKey: 'not-a-key', encryptedPrivateKey: after.encryptedPrivateKey }, 400);
+    await kate.c.put('/api/me/keys', { publicKey: fresh.publicKey, encryptedPrivateKey: await wrapPrivateKey(fresh.privateKey, next.wrapKey) });
+    assert.equal((await update).chatId, dm.chat.id);
+    assert.equal((await leo.c.get<{ chat: Chat }>(`/api/chats/${dm.chat.id}`)).chat.peer!.publicKey, fresh.publicKey);
+  } finally {
+    leoSocket.close();
+  }
+});
+
+test('connected devices can be listed and signed out', async () => {
+  const mia = await Client.register('Mia');
+  const login = async (ua: string) => {
+    const c = new Client();
+    const res = await fetch(base + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'User-Agent': ua },
+      body: JSON.stringify({ email: 'mia@example.com', password: 'password123' }),
+    });
+    c.cookie = res.headers.get('set-cookie')!.split(';')[0]!;
+    return c;
+  };
+  const phone = await login('OlimTalk/1.0 (iPhone)');
+  const { sessions } = await mia.get<{ sessions: { id: string; userAgent: string; current: boolean }[] }>('/api/me/sessions');
+  assert.equal(sessions.length, 2);
+  assert.equal(sessions.filter((s) => s.current).length, 1);
+  const other = sessions.find((s) => !s.current)!;
+  assert.equal(other.userAgent, 'OlimTalk/1.0 (iPhone)');
+  await phone.get('/api/chats');
+  await mia.del(`/api/me/sessions/${other.id}`);
+  await phone.get('/api/chats', 401);
+  await mia.get('/api/chats'); // the device that did it stays signed in
+  await bob.del(`/api/me/sessions/${sessions.find((s) => s.current)!.id}`, 404); // not someone else's
+});
+
+test('privacy choices: hide when I am online, hide what I have read', async () => {
+  const nina = await Client.register('Nina');
+  const dm = await nina.post<{ chat: Chat }>('/api/dm', { userId: bob.me.id });
+  const { message } = await bob.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('coucou') }, 201);
+  const seen = async () => (await bob.get<{ chat: Chat }>(`/api/chats/${dm.chat.id}`)).chat;
+  assert.ok((await seen()).peer!.lastSeen > 0);
+
+  const { me } = await nina.patch<{ me: Me }>('/api/me', { hidePresence: true, noReceipts: true });
+  assert.deepEqual([me.hidePresence, me.noReceipts], [true, true]);
+  assert.ok(me.lastSeen > 0, 'she still sees her own data');
+  const hidden = (await seen()).peer!;
+  assert.deepEqual([hidden.lastSeen, hidden.online], [0, false]);
+
+  const bobSocket = await bob.socket();
+  try {
+    let received = false;
+    bobSocket.on('read', () => (received = true));
+    await nina.post(`/api/chats/${dm.chat.id}/read`, { messageId: message.id });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(received, false, 'no read receipt is sent');
+    assert.equal((await seen()).peerLastReadId, 0);
+  } finally {
+    bobSocket.close();
+  }
+});
+
+// ───────────────────────── connections: calendar and mailbox ─────────────────────────
+
+test('calendar: a private feed any agenda can subscribe to', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Agenda test', category: 'event' }, 201);
+  const startsAt = Date.UTC(2031, 4, 20, 17, 30);
+  await alice.post(`/api/chats/${chat.id}/events`, { title: 'Soirée; jeux, pizzas', location: 'Rothschild 12, Tel Aviv', description: 'Ligne 1\nLigne 2', startsAt }, 201);
+  const { url } = await alice.get<{ url: string }>('/api/me/calendar-feed');
+  assert.match(url, /\/api\/cal\/[a-z0-9]{20}\.ics$/);
+  assert.equal((await alice.get<{ url: string }>('/api/me/calendar-feed')).url, url, 'the address is stable');
+
+  // No login: calendar apps fetch it as is.
+  const res = await fetch(base + new URL(url).pathname);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /text\/calendar/);
+  const ics = await res.text();
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n'));
+  assert.ok(ics.includes('DTSTART:20310520T173000Z'));
+  assert.ok(ics.includes('DTEND:20310520T193000Z'), 'two hours by default');
+  assert.ok(ics.includes('SUMMARY:Soirée\\; jeux\\, pizzas'), 'special characters are escaped');
+  assert.ok(ics.includes('LOCATION:Rothschild 12\\, Tel Aviv'));
+  assert.ok(ics.includes('STATUS:CONFIRMED'));
+  assert.ok(ics.split('\r\n').every((line) => Buffer.byteLength(line) <= 75), 'long lines are folded');
+  // Someone who is not going does not get the event.
+  const bobFeed = await bob.get<{ url: string }>('/api/me/calendar-feed');
+  assert.ok(!(await (await fetch(base + new URL(bobFeed.url).pathname)).text()).includes('Soirée'));
+
+  // A new address cuts off whoever had the old one.
+  const fresh = await alice.post<{ url: string }>('/api/me/calendar-feed/reset');
+  assert.notEqual(fresh.url, url);
+  assert.equal((await fetch(base + new URL(url).pathname)).status, 404);
+  assert.equal((await fetch(base + '/api/cal/unknown.ics')).status, 404);
+});
+
+test('calendar: reading an external agenda by its address, without becoming a way into private networks', async () => {
+  const http = await import('node:http');
+  const ICS = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:1\r\nDTSTART:20310101T100000Z\r\nSUMMARY:Rendez-vous banque\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+  const server = http.createServer((req, res) => {
+    if (req.url === '/cal.ics') res.writeHead(200, { 'Content-Type': 'text/calendar' }).end(ICS);
+    else if (req.url === '/moved') res.writeHead(302, { Location: '/cal.ics' }).end();
+    else if (req.url === '/page') res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>pas un agenda</html>');
+    else res.writeHead(404).end();
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    assert.equal((await alice.post<{ ics: string }>('/api/ics/fetch', { url: `${origin}/cal.ics` })).ics, ICS);
+    assert.equal((await alice.post<{ ics: string }>('/api/ics/fetch', { url: `${origin}/moved` })).ics, ICS, 'redirections are followed');
+    await alice.post('/api/ics/fetch', { url: `${origin}/page` }, 400);
+    await alice.post('/api/ics/fetch', { url: `${origin}/missing` }, 400);
+    await alice.post('/api/ics/fetch', { url: 'file:///etc/passwd' }, 400);
+    await alice.post('/api/ics/fetch', { url: 'not a url' }, 400);
+    await new Client().post('/api/ics/fetch', { url: `${origin}/cal.ics` }, 401);
+  } finally {
+    server.close();
+  }
+  // The rule that protects real deployments (switched off above only to reach the test server).
+  const { isPrivateAddress } = await import('../routes/connect.ts');
+  for (const a of ['127.0.0.1', '10.1.2.3', '172.16.0.9', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fe80::1', 'fd00::1', '::ffff:10.0.0.1', '::ffff:127.0.0.1', 'pas-une-adresse']) {
+    assert.equal(isPrivateAddress(a), true, a);
+  }
+  for (const a of ['8.8.8.8', '142.250.74.14', '2a00:1450:4007:80e::200e', '::ffff:8.8.8.8']) assert.equal(isPrivateAddress(a), false, a);
+});
+
+test('mailbox: forwarded e-mails are sealed on arrival; only their owner can read them', async () => {
+  const olga = await secureClient('Olga');
+  const box = await olga.c.get<{ enabled: boolean; address: string }>('/api/me/mailbox');
+  assert.equal(box.enabled, true);
+  assert.match(box.address, /^[a-z0-9]{20}@in\.olimtalk\.test$/);
+
+  // 1) Received over SMTP, the way a forwarding rule in Gmail or Outlook delivers it.
+  const transport = nodemailer.createTransport({ host: '127.0.0.1', port: smtpPort, secure: false, ignoreTLS: true });
+  const socket = await olga.c.socket();
+  try {
+    const arrived = once<{ id: number }>(socket, 'mail:new');
+    await transport.sendMail({
+      from: '"Misrad HaPnim" <noreply@piba.example>',
+      to: box.address,
+      subject: 'Convocation — renouvellement du passeport',
+      text: 'Bonjour,\n\nVotre rendez-vous est fixé au 12 mars à 9h30.\n\nCordialement.',
+      attachments: [{ filename: 'convocation.pdf', content: Buffer.from('%PDF-1.4 faux pdf'), contentType: 'application/pdf' }],
+    });
+    await arrived;
+  } finally {
+    socket.close();
+  }
+  // Unknown recipients are refused at the door.
+  await assert.rejects(transport.sendMail({ from: 'a@b.example', to: 'aaaaaaaaaaaaaaaaaaaa@in.olimtalk.test', subject: 'x', text: 'x' }));
+  await assert.rejects(transport.sendMail({ from: 'a@b.example', to: 'someone@elsewhere.example', subject: 'x', text: 'x' }), 'no relaying');
+
+  // 2) Received over HTTP from an e-mail service.
+  const raw = ['From: Banque <info@bank.example>', `To: ${box.address}`, 'Subject: =?UTF-8?B?UmVsZXbDqSBkZSBjb21wdGU=?=', 'Content-Type: text/html; charset=utf-8', '', '<p>Votre <b>relevé</b> est disponible.</p>'].join('\r\n');
+  const post = (to: string, secret: string) => fetch(`${base}/api/inbound/email?to=${encodeURIComponent(to)}`, { method: 'POST', headers: { 'Content-Type': 'message/rfc822', 'X-Inbound-Secret': secret }, body: raw });
+  assert.equal((await post(box.address, 'wrong-secret')).status, 404);
+  assert.equal((await post('aaaaaaaaaaaaaaaaaaaa@in.olimtalk.test', 'test-inbound-secret')).status, 404);
+  assert.equal((await post(box.address, 'test-inbound-secret')).status, 201);
+
+  const { emails, unread } = await olga.c.get<{ emails: { id: number; header: string; body: string; read: boolean }[]; unread: number }>('/api/mail');
+  assert.equal(emails.length, 2);
+  assert.equal(unread, 2);
+  // What the server holds is unreadable…
+  const { db } = await import('../db.ts');
+  const stored = JSON.stringify(db.prepare('SELECT * FROM emails WHERE user_id = ?').all(olga.c.me.id));
+  assert.ok(!stored.includes('Convocation') && !stored.includes('piba') && !stored.includes('bank'));
+  const bodyRes = await fetch(base + emails[1]!.body);
+  const sealed = new Uint8Array(await bodyRes.arrayBuffer());
+  assert.ok(!Buffer.from(sealed).toString('latin1').includes('rendez-vous'));
+  assert.match(bodyRes.headers.get('content-disposition') ?? '', /attachment/);
+  // …except by Olga, with her private key.
+  const header = await unsealJson<{ from: { name: string; address: string }; subject: string; snippet: string; attachments: number }>(olga.identity.privateKey, emails[1]!.header);
+  assert.deepEqual([header.from.name, header.subject, header.attachments], ['Misrad HaPnim', 'Convocation — renouvellement du passeport', 1]);
+  const body = JSON.parse(new TextDecoder().decode(await unseal(olga.identity.privateKey, sealed))) as { text: string; attachments: { name: string; mime: string; data: string }[] };
+  assert.ok(body.text.includes('12 mars à 9h30'));
+  assert.equal(body.attachments[0]!.name, 'convocation.pdf');
+  assert.equal(Buffer.from(fromBase64(body.attachments[0]!.data)).toString(), '%PDF-1.4 faux pdf');
+  const html = await unsealJson<{ subject: string; snippet: string }>(olga.identity.privateKey, emails[0]!.header);
+  assert.equal(html.subject, 'Relevé de compte');
+  assert.match(html.snippet, /Votre \*?relevé\*? est disponible/i);
+  const stranger = await generateIdentity();
+  await assert.rejects(unsealJson(stranger.privateKey, emails[1]!.header));
+
+  // Nobody else can list, mark or delete them.
+  assert.equal((await bob.get<{ emails: unknown[] }>('/api/mail')).emails.length, 0);
+  await bob.patch(`/api/mail/${emails[0]!.id}`, { read: true }, 404);
+  await bob.del(`/api/mail/${emails[0]!.id}`, 404);
+  await olga.c.patch(`/api/mail/${emails[0]!.id}`, { read: true });
+  assert.equal((await olga.c.get<{ unread: number }>('/api/mail')).unread, 1);
+  await olga.c.del(`/api/mail/${emails[1]!.id}`);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal((await fetch(base + emails[1]!.body)).status, 404, 'the sealed file is erased with the e-mail');
+
+  // A new address makes the old one bounce; an account without keys cannot receive.
+  const fresh = await olga.c.post<{ address: string }>('/api/me/mailbox/reset');
+  assert.notEqual(fresh.address, box.address);
+  assert.equal((await post(box.address, 'test-inbound-secret')).status, 404);
+  const noKeys = await alice.get<{ address: string }>('/api/me/mailbox');
+  assert.equal((await post(noKeys.address, 'test-inbound-secret')).status, 422);
 });

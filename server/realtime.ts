@@ -51,6 +51,8 @@ function dmChatIds(userId: number): number[] {
 }
 
 function broadcastPresence(userId: number, isOn: boolean) {
+  const hidden = db.prepare('SELECT hide_presence FROM users WHERE id = ?').get(userId) as { hide_presence: number } | undefined;
+  if (!hidden || hidden.hide_presence) return;
   const payload = { userId, online: isOn, lastSeen: now() };
   for (const id of dmChatIds(userId)) io?.to(chatRoom(id)).emit('presence', payload);
 }

@@ -14,6 +14,8 @@ export function publicConfig() {
     appStoreUrl: (process.env.APP_STORE_URL || '').trim() || null,
     playStoreUrl: (process.env.PLAY_STORE_URL || '').trim() || null,
     contact: CONTACT || null,
+    // Whether people can get a private forwarding address for their e-mails.
+    mail: !!(process.env.MAIL_DOMAIN || '').trim(),
   };
 }
 

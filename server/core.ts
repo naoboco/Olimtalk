@@ -46,9 +46,11 @@ export function toUserPublic(u: UserRow): UserPublic {
     city: u.city,
     world: u.world as World,
     aliyahYear: u.aliyah_year,
-    lastSeen: u.last_seen,
-    online: isOnline(u.id),
+    // People can choose not to show when they are or were online.
+    lastSeen: u.hide_presence ? 0 : u.last_seen,
+    online: u.hide_presence ? false : isOnline(u.id),
     isSystem: !!u.is_system,
+    publicKey: u.e2e_public,
   };
 }
 
@@ -56,7 +58,16 @@ export function toMe(u: UserRow): Me {
   const blocked = (db.prepare('SELECT blocked_id FROM blocks WHERE user_id = ?').all(u.id) as { blocked_id: number }[]).map(
     (r) => r.blocked_id,
   );
-  return { ...toUserPublic(u), email: u.email, isAdmin: !!u.is_admin, blocked };
+  return {
+    ...toUserPublic(u),
+    lastSeen: u.last_seen,
+    online: true,
+    email: u.email,
+    isAdmin: !!u.is_admin,
+    blocked,
+    hidePresence: !!u.hide_presence,
+    noReceipts: !!u.no_receipts,
+  };
 }
 
 export function getUser(id: number): UserRow | undefined {
@@ -224,6 +235,7 @@ export function serializeMessages(rows: MessageRow[], viewerId: number | null): 
         : reactionRows.filter((x) => x.message_id === r.id).map((x) => ({ emoji: x.emoji, count: x.n, mine: !!x.mine })),
       starred: starred.has(r.id),
       mentions: meta.mentions ?? [],
+      enc: deleted ? null : r.enc,
     };
     if (!deleted && r.type === 'poll' && meta.poll) {
       const poll: PollData = { ...meta.poll, ...pollState(r.id, meta.poll.options.length, viewerId) };
@@ -238,6 +250,9 @@ export function serializeMessages(rows: MessageRow[], viewerId: number | null): 
   });
 }
 
+/** Previews carry the ciphertext of short encrypted messages so the reader's device can decrypt them. */
+const previewEnc = (r: MessageRow) => (r.enc && !r.deleted_at && r.enc.length <= 6000 ? r.enc : null);
+
 function toRef(r: MessageRow, u: UserRow | undefined): MessageRef {
   const deleted = !!r.deleted_at;
   return {
@@ -247,10 +262,13 @@ function toRef(r: MessageRow, u: UserRow | undefined): MessageRef {
     type: r.type as MessageType,
     text: deleted ? '' : previewText(r),
     deleted,
+    enc: previewEnc(r),
+    encrypted: !!r.enc,
   };
 }
 
 function previewText(r: MessageRow): string {
+  if (r.enc) return '';
   if (r.type === 'poll') return parseJson<Meta>(r.meta)?.poll?.question ?? '';
   if (r.type === 'event') return r.text;
   if (r.text) return r.text.slice(0, 160);
@@ -267,6 +285,8 @@ function toPreview(r: MessageRow & { user_name: string }): MessagePreview {
     text: deleted ? '' : previewText(r),
     deleted,
     createdAt: r.created_at,
+    enc: previewEnc(r),
+    encrypted: !!r.enc,
   };
   if (r.type === 'system') p.system = parseJson<Meta>(r.meta)?.system;
   return p;
@@ -385,7 +405,8 @@ export function serializeChats(chats: ChatRow[], viewer: UserRow | null): Chat[]
     };
     if (c.type === 'dm' && peer) {
       chat.peer = toUserPublic(peer.user);
-      chat.peerLastReadId = peer.lastRead;
+      // Someone who turned read receipts off does not reveal what they have read.
+      chat.peerLastReadId = peer.user.no_receipts ? 0 : peer.lastRead;
     }
     return chat;
   });
@@ -489,6 +510,8 @@ export interface NewMessage {
   meta?: Meta | null;
   replyToId?: number | null;
   forwarded?: boolean;
+  /** Ciphertext of an end-to-end encrypted message (private conversations). */
+  enc?: string | null;
   silent?: boolean; // do not broadcast (seeding)
 }
 
@@ -497,8 +520,8 @@ export function createMessage(m: NewMessage): Message {
   const t = now();
   const info = db
     .prepare(
-      `INSERT INTO messages (chat_id, user_id, type, text, attachment, meta, reply_to_id, forwarded, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO messages (chat_id, user_id, type, text, attachment, meta, reply_to_id, forwarded, created_at, enc)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       m.chat.id,
@@ -510,6 +533,7 @@ export function createMessage(m: NewMessage): Message {
       m.replyToId ?? null,
       m.forwarded ? 1 : 0,
       t,
+      m.enc ?? null,
     );
   const id = Number(info.lastInsertRowid);
   db.prepare('UPDATE chats SET last_message_id = ?, last_activity = ? WHERE id = ?').run(id, t, m.chat.id);
@@ -579,7 +603,7 @@ export function removeOrphanUploads(urls: string[]) {
  * database (only the "deleted" marker stays), and its file from the disk.
  */
 export function eraseMessage(row: MessageRow) {
-  db.prepare('UPDATE messages SET deleted_at = ?, text = \'\', attachment = NULL, meta = NULL, pinned_at = NULL, pinned_by = NULL WHERE id = ?').run(
+  db.prepare('UPDATE messages SET deleted_at = ?, text = \'\', attachment = NULL, meta = NULL, enc = NULL, pinned_at = NULL, pinned_by = NULL WHERE id = ?').run(
     now(),
     row.id,
   );

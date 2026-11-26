@@ -143,7 +143,12 @@ router.get('/starred', requireAuth, (req, res) => {
 
 // ───────────── send ─────────────
 
+/** Ciphertext produced on the sender's device. Opaque to the server. */
+const zEnc = z.string().min(20).max(60_000);
+
 const zSend = z.object({
+  enc: zEnc.optional(),
+  forwarded: z.boolean().optional(),
   text: z.string().max(8000).default(''),
   attachment: zAttachment.nullable().optional(),
   replyToId: z.number().int().positive().nullable().optional(),
@@ -162,14 +167,23 @@ router.post('/chats/:id/messages', requireAuth, (req, res) => {
   assertCanSend(chat, user);
   const body = parse(zSend, req.body);
   const text = body.text.trim();
-  if (!text && !body.attachment && !body.poll) throw bad('empty_message');
+  if (chat.type === 'dm') {
+    // Private conversations are end-to-end encrypted: the server refuses to store plaintext.
+    if (!body.enc || text || body.poll) throw bad('encryption_required');
+    // A file can only be an opaque encrypted blob; its real name and type are inside the ciphertext.
+    if (body.attachment && body.attachment.mime !== 'application/octet-stream') throw bad('encryption_required');
+  } else if (body.enc) {
+    // Groups are public: hidden content has no place there.
+    throw bad('invalid_input');
+  }
+  if (!text && !body.attachment && !body.poll && !body.enc) throw bad('empty_message');
   if (body.replyToId) {
     const target = getMessage(body.replyToId);
     if (target.chat_id !== chat.id) throw bad('invalid_reply');
   }
   let type: MessageType = 'text';
   if (body.poll) type = 'poll';
-  else if (body.attachment) type = body.attachment.kind;
+  else if (body.attachment && !body.enc) type = body.attachment.kind;
   const mentions = text ? resolveMentions(chat.id, text) : [];
   const message = createMessage({
     chat,
@@ -178,6 +192,8 @@ router.post('/chats/:id/messages', requireAuth, (req, res) => {
     text,
     attachment: body.poll ? null : (body.attachment ?? null),
     replyToId: body.replyToId ?? null,
+    forwarded: !!body.forwarded,
+    enc: body.enc ?? null,
     meta: { ...(body.poll ? { poll: body.poll } : {}), ...(mentions.length ? { mentions } : {}) },
   });
   res.status(201).json({ message });
@@ -190,6 +206,16 @@ router.patch('/messages/:id', requireAuth, (req, res) => {
   const row = getMessage(intParam(req, 'id'));
   if (row.user_id !== user.id || row.deleted_at) throw new HttpError(403, 'forbidden');
   if (row.type === 'poll' || row.type === 'event' || row.type === 'system') throw bad('not_editable');
+  if (row.enc) {
+    // An encrypted message is replaced by a new ciphertext written on the author's device.
+    const { enc } = parse(z.object({ enc: zEnc }), req.body);
+    const t = now();
+    db.prepare('UPDATE messages SET enc = ?, edited_at = ? WHERE id = ?').run(enc, t, row.id);
+    const patch: MessagePatchEvent = { chatId: row.chat_id, id: row.id, patch: { enc, editedAt: t } };
+    emitToChat(row.chat_id, 'message:patch', patch);
+    res.json({ ok: true });
+    return;
+  }
   const body = parse(z.object({ text: z.string().trim().max(8000) }), req.body);
   if (!body.text && !row.attachment) throw bad('empty_message');
   const t = now();
@@ -289,10 +315,14 @@ router.post('/messages/:id/forward', requireAuth, (req, res) => {
   const row = getMessage(intParam(req, 'id'));
   assertCanRead(getChat(row.chat_id), user);
   if (row.deleted_at || row.type === 'poll' || row.type === 'event' || row.type === 'system') throw bad('not_forwardable');
+  // The server cannot read an encrypted message, nor write into an encrypted conversation:
+  // in both cases the sender's device decrypts / re-encrypts and sends it itself.
+  if (row.enc) throw bad('encryption_required');
   const body = parse(z.object({ chatIds: z.array(z.number().int().positive()).min(1).max(10) }), req.body);
   const sent: number[] = [];
   for (const chatId of [...new Set(body.chatIds)]) {
     const target = getChat(chatId);
+    if (target.type === 'dm') throw bad('encryption_required');
     assertCanSend(target, user);
     createMessage({
       chat: target,

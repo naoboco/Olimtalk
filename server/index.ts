@@ -11,14 +11,18 @@ import { initRealtime } from './realtime.ts';
 import { router as authRoutes } from './routes/auth.ts';
 import { findInvite, router as chatRoutes } from './routes/chats.ts';
 import { router as communityRoutes } from './routes/community.ts';
+import { router as connectRoutes } from './routes/connect.ts';
 import { router as messageRoutes } from './routes/messages.ts';
 import { router as miscRoutes } from './routes/misc.ts';
 import { seed } from './seed.ts';
+import { startSmtp } from './smtp.ts';
 import { HttpError, escapeHtml } from './util.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const PROD = process.env.NODE_ENV === 'production';
 const WEB_DIR = path.resolve(process.env.WEB_DIR || 'dist/web');
+
+const AI_HOSTS = ['https://api.anthropic.com', 'https://api.openai.com', 'https://generativelanguage.googleapis.com', 'https://api.mistral.ai'];
 
 export const app = express();
 app.disable('x-powered-by');
@@ -32,7 +36,9 @@ app.use(
       directives: {
         'img-src': ["'self'", 'data:', 'blob:'],
         'media-src': ["'self'", 'blob:'],
-        'connect-src': ["'self'", 'ws:', 'wss:'],
+        // 'self' plus the AI services a person may plug in with their own key: those calls
+        // go straight from their browser to the provider, never through this server.
+        'connect-src': ["'self'", 'ws:', 'wss:', ...AI_HOSTS, ...(process.env.CSP_CONNECT_EXTRA || '').split(/[\s,]+/).filter(Boolean)],
         'style-src': ["'self'", "'unsafe-inline'"],
         'upgrade-insecure-requests': null,
       },
@@ -88,7 +94,7 @@ const api = express.Router();
 api.use(loadUser);
 api.get('/health', (_req, res) => res.json({ ok: true }));
 api.get('/config', (_req, res) => res.json(publicConfig()));
-api.use(authRoutes, chatRoutes, messageRoutes, communityRoutes, miscRoutes);
+api.use(authRoutes, chatRoutes, messageRoutes, communityRoutes, connectRoutes, miscRoutes);
 api.use((_req, _res, next) => next(new HttpError(404, 'not_found')));
 app.use('/api', api);
 
@@ -185,6 +191,8 @@ if (created) console.log(`[olimtalk] seeded ${created} built-in groups and commu
 
 export const server = http.createServer(app);
 initRealtime(server, APP_ORIGINS);
+
+export const smtp = process.env.SMTP_PORT ? startSmtp(Number(process.env.SMTP_PORT)) : null;
 
 if (process.env.OLIMTALK_NO_LISTEN !== '1') {
   server.listen(PORT, () => console.log(`[olimtalk] listening on http://localhost:${PORT} (${PROD ? 'production' : 'development'})`));

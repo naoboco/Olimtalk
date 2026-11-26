@@ -287,8 +287,8 @@ router.post('/chats/:id/read', requireAuth, (req, res) => {
   const info = db
     .prepare('UPDATE chat_members SET last_read_id = ? WHERE chat_id = ? AND user_id = ? AND last_read_id < ?')
     .run(lastId, chat.id, user.id, lastId);
-  // Read receipts are only shared in private conversations.
-  if (info.changes && chat.type === 'dm') emitToChat(chat.id, 'read', { chatId: chat.id, userId: user.id, lastReadId: lastId });
+  // Read receipts are only shared in private conversations, and only by people who left them on.
+  if (info.changes && chat.type === 'dm' && !user.no_receipts) emitToChat(chat.id, 'read', { chatId: chat.id, userId: user.id, lastReadId: lastId });
   res.json({ ok: true });
 });
 

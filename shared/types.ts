@@ -23,12 +23,18 @@ export interface UserPublic {
   lastSeen: number;
   online: boolean;
   isSystem: boolean;
+  /** End-to-end encryption public key (null until the person has opened a recent app). */
+  publicKey: string | null;
 }
 
 export interface Me extends UserPublic {
   email: string;
   isAdmin: boolean;
   blocked: number[];
+  /** Do not show others when I am or was online. */
+  hidePresence: boolean;
+  /** Do not tell others what I have read. */
+  noReceipts: boolean;
 }
 
 export interface Attachment {
@@ -41,6 +47,11 @@ export interface Attachment {
   height?: number;
   duration?: number;
   voice?: boolean;
+  /**
+   * Set (on the device only) for a file of an encrypted conversation: the key that
+   * decrypts the blob stored at `url`. It travels inside the encrypted message.
+   */
+  key?: string;
 }
 
 export interface Reaction {
@@ -91,6 +102,9 @@ export interface MessageRef {
   type: MessageType;
   text: string;
   deleted: boolean;
+  /** Ciphertext of an encrypted message, when short enough to travel in a preview. */
+  enc?: string | null;
+  encrypted?: boolean;
 }
 
 export interface Message {
@@ -113,6 +127,8 @@ export interface Message {
   poll?: PollData;
   event?: EventData;
   system?: SystemInfo;
+  /** Ciphertext of an end-to-end encrypted message; `text` is empty until the device decrypts it. */
+  enc?: string | null;
 }
 
 export interface MessagePreview {
@@ -124,6 +140,8 @@ export interface MessagePreview {
   deleted: boolean;
   createdAt: number;
   system?: SystemInfo;
+  enc?: string | null;
+  encrypted?: boolean;
 }
 
 export interface Chat {
@@ -224,7 +242,7 @@ export interface Report {
 export interface MessagePatchEvent {
   chatId: number;
   id: number;
-  patch: Partial<Pick<Message, 'text' | 'editedAt' | 'deleted' | 'attachment' | 'pinnedAt' | 'mentions'>>;
+  patch: Partial<Pick<Message, 'text' | 'editedAt' | 'deleted' | 'attachment' | 'pinnedAt' | 'mentions' | 'enc'>>;
 }
 export interface ReactionEvent {
   chatId: number;

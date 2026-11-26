@@ -220,6 +220,41 @@ function addColumn(table: string, column: string, definition: string) {
   if (!columns.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 addColumn('reports', 'snapshot', "TEXT NOT NULL DEFAULT ''");
+// End-to-end encryption: public key, private key wrapped with a key only the person can derive.
+addColumn('users', 'e2e_public', 'TEXT');
+addColumn('users', 'e2e_private', 'TEXT');
+// Settings vault (AI key, calendar links…): ciphertext the server cannot read.
+addColumn('users', 'vault', 'TEXT');
+// Privacy choices.
+addColumn('users', 'hide_presence', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'no_receipts', 'INTEGER NOT NULL DEFAULT 0');
+// Secret tokens of the personal calendar feed and of the forwarding e-mail address.
+addColumn('users', 'cal_token', 'TEXT');
+addColumn('users', 'mail_token', 'TEXT');
+// Ciphertext of an encrypted (private) message; `text` is then empty.
+addColumn('messages', 'enc', 'TEXT');
+// Connected devices.
+addColumn('sessions', 'id', 'TEXT');
+addColumn('sessions', 'user_agent', "TEXT NOT NULL DEFAULT ''");
+addColumn('sessions', 'last_used', 'INTEGER NOT NULL DEFAULT 0');
+
+db.exec(`
+CREATE UNIQUE INDEX IF NOT EXISTS users_cal_token ON users(cal_token) WHERE cal_token IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_mail_token ON users(mail_token) WHERE mail_token IS NOT NULL;
+
+-- E-mails forwarded to a person's private OlimTalk address. Both the summary and the
+-- body are sealed with the recipient's public key on arrival: the server cannot read them.
+CREATE TABLE IF NOT EXISTS emails (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  received_at INTEGER NOT NULL,
+  size        INTEGER NOT NULL,
+  header      TEXT NOT NULL,      -- sealed: from, subject, date, snippet
+  body        TEXT NOT NULL,      -- /uploads/… of the sealed body and attachments
+  read        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS emails_user ON emails(user_id, id);
+`);
 
 // ---- row types ----
 export interface UserRow {
@@ -239,6 +274,13 @@ export interface UserRow {
   banned: number;
   created_at: number;
   last_seen: number;
+  e2e_public: string | null;
+  e2e_private: string | null;
+  vault: string | null;
+  hide_presence: number;
+  no_receipts: number;
+  cal_token: string | null;
+  mail_token: string | null;
 }
 
 export interface ChatRow {
@@ -292,6 +334,7 @@ export interface MessageRow {
   pinned_at: number | null;
   pinned_by: number | null;
   created_at: number;
+  enc: string | null;
 }
 
 export interface CommunityRow {
