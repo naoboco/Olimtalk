@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CATEGORY_EMOJI, PROFILE_EMOJI, cityName } from '../../../shared/data.ts';
-import type { Chat, Member, Message } from '../../../shared/types.ts';
+import type { Chat, JoinRequest, Member, Message } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { compactNumber, lastSeen, richText } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
 import { asset } from '../lib/platform.ts';
 import { copyText, inviteUrl } from '../lib/share.ts';
-import { useStore } from '../lib/store.ts';
+import { isClosedTo, useStore } from '../lib/store.ts';
 import { Confirm, GroupDialog, ReportDialog, categoryKey, profileKey } from './dialogs.tsx';
 import { Icon } from './icons.tsx';
 import { previewLine } from './Message.tsx';
@@ -30,14 +30,37 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
   const [report, setReport] = useState(false);
   const [confirm, setConfirm] = useState<'leave' | 'delete' | 'reset' | null>(null);
   const [memberMenu, setMemberMenu] = useState<{ m: Member; x: number; y: number } | null>(null);
+  const [requests, setRequests] = useState<JoinRequest[]>([]);
 
   useDismiss(onClose);
   const group = chat.type === 'group';
   const isAdmin = chat.role === 'owner' || chat.role === 'admin';
   const link = chat.inviteCode ? inviteUrl(chat.inviteCode) : '';
+  // Outside a private group, only its name and description can be seen.
+  const closed = isClosedTo(chat, me);
+
+  // People waiting to be let into this private group.
+  useEffect(() => {
+    if (!isAdmin || !chat.isPrivate || !chat.pendingRequests) return setRequests([]);
+    api
+      .get<{ requests: JoinRequest[] }>(`/chats/${chat.id}/requests`)
+      .then((r) => setRequests(r.requests))
+      .catch(() => undefined);
+  }, [chat.id, chat.pendingRequests, chat.isPrivate, isAdmin]);
+
+  const answer = async (userId: number, action: 'approve' | 'decline') => {
+    try {
+      const r = await api.post<{ chat: Chat }>(`/chats/${chat.id}/requests/${userId}`, { action });
+      setRequests((prev) => prev.filter((x) => x.user.id !== userId));
+      upsertChat(r.chat);
+      if (action === 'approve') toast(t('request_accepted'));
+    } catch (e) {
+      error(e);
+    }
+  };
 
   const loadMembers = async (offset = 0, query = q) => {
-    if (!group) return;
+    if (!group || closed) return;
     setLoading(true);
     try {
       const r = await api.get<{ members: Member[]; hasMore: boolean }>(`/chats/${chat.id}/members?offset=${offset}&q=${encodeURIComponent(query)}`);
@@ -56,6 +79,7 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
   }, [chat.id, q, chat.memberCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (closed) return;
     api
       .get<{ messages: Message[] }>(`/chats/${chat.id}/media`)
       .then((r) => setMedia(r.messages))
@@ -90,9 +114,11 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
     }
   };
 
-  const setPolicy = async (patch: { sendPolicy?: 'all' | 'admins'; pinPolicy?: 'all' | 'admins' }) => {
-    const previous = { sendPolicy: chat.sendPolicy, pinPolicy: chat.pinPolicy };
-    patchChat(chat.id, patch);
+  const setPolicy = async (patch: { sendPolicy?: 'all' | 'admins'; pinPolicy?: 'all' | 'admins'; private?: boolean; listed?: boolean }) => {
+    const previous = { sendPolicy: chat.sendPolicy, pinPolicy: chat.pinPolicy, isPrivate: chat.isPrivate, listed: chat.listed };
+    // The switch answers at once; the server confirms (or it goes back).
+    const { private: makePrivate, ...rest } = patch;
+    patchChat(chat.id, { ...rest, ...(makePrivate === undefined ? {} : { isPrivate: makePrivate }) });
     try {
       const r = await api.patch<{ chat: Chat }>(`/chats/${chat.id}`, patch);
       upsertChat(r.chat);
@@ -150,7 +176,7 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
           <h3 dir="auto">{chat.name}</h3>
           {group ? (
             <div className="muted">
-              {t('public_group')}
+              {chat.isPrivate && <Icon name="lock" size={14} />} {t(chat.isPrivate ? 'private_group' : 'public_group')}
               {chat.memberCount > 0 && ` · ${t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })}`}
             </div>
           ) : (
@@ -197,6 +223,33 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
           </button>
         )}
 
+        {requests.length > 0 && (
+          <section className="info-section">
+            <div className="section-title">
+              {t('join_requests')} · {requests.length}
+            </div>
+            <div className="member-list">
+              {requests.map((r) => (
+                <div key={r.user.id} className="member request">
+                  <Avatar id={r.user.id} name={r.user.name} src={r.user.avatar} size={40} onClick={() => openProfile(r.user.id)} />
+                  <span className="member-text">
+                    <strong dir="auto">{r.user.name}</strong>
+                    <small>@{r.user.username}</small>
+                  </span>
+                  <span className="request-actions">
+                    <button type="button" className="btn small primary" onClick={() => void answer(r.user.id, 'approve')}>
+                      {t('request_accept')}
+                    </button>
+                    <button type="button" className="btn small ghost" onClick={() => void answer(r.user.id, 'decline')}>
+                      {t('request_decline')}
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {group && link && (
           <section className="info-section">
             <div className="section-title">{t('invite_link')}</div>
@@ -217,7 +270,7 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
                 </button>
               )}
             </div>
-            <p className="muted small">{t('invite_link_hint')}</p>
+            <p className="muted small">{t(chat.isPrivate ? 'invite_link_hint_private' : 'invite_link_hint')}</p>
           </section>
         )}
 
@@ -251,6 +304,24 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
               <span>{t('everyone_can_pin')}</span>
               <input type="checkbox" className="switch" checked={chat.pinPolicy === 'all'} onChange={(e) => void setPolicy({ pinPolicy: e.target.checked ? 'all' : 'admins' })} />
             </label>
+            {(chat.isPrivate || (!chat.isAnnouncement && chat.category !== 'city')) && (
+              <label className="switch-row">
+                <span>
+                  {t('private_group')}
+                  <small>{t('private_group_choice')}</small>
+                </span>
+                <input type="checkbox" className="switch" checked={chat.isPrivate} onChange={(e) => void setPolicy({ private: e.target.checked })} />
+              </label>
+            )}
+            {chat.isPrivate && (
+              <label className="switch-row">
+                <span>
+                  {t('private_listed')}
+                  <small>{t('private_listed_hint')}</small>
+                </span>
+                <input type="checkbox" className="switch" checked={chat.listed} onChange={(e) => void setPolicy({ listed: e.target.checked })} />
+              </label>
+            )}
           </section>
         )}
 

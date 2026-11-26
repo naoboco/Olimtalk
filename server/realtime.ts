@@ -59,6 +59,23 @@ function broadcastPresence(userId: number, isOn: boolean) {
 
 const typingLimit = rateLimiter(20, 10_000);
 
+function mayReadPrivate(chatId: number, userId: number): boolean {
+  if (db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(chatId, userId)) return true;
+  return !!(db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId) as { is_admin: number } | undefined)?.is_admin;
+}
+
+/** A group just became private: connections that were reading it without being members stop receiving it. */
+export function dropOutsiders(chatId: number) {
+  if (!io) return;
+  void io
+    .in(chatRoom(chatId))
+    .fetchSockets()
+    .then((sockets) => {
+      for (const socket of sockets) if (!mayReadPrivate(chatId, socket.data.userId as number)) socket.leave(chatRoom(chatId));
+    })
+    .catch(() => undefined);
+}
+
 export function initRealtime(server: HttpServer, corsOrigins: string[] = []) {
   io = new Server(server, {
     path: '/socket.io',
@@ -88,10 +105,11 @@ export function initRealtime(server: HttpServer, corsOrigins: string[] = []) {
     if (count === 1) broadcastPresence(userId, true);
 
     // Public groups can be read without joining: "watch" subscribes to live updates.
+    // A private group is only for its members (and the moderation team).
     socket.on('watch', (chatId: unknown) => {
       if (typeof chatId !== 'number') return;
-      const chat = db.prepare("SELECT id FROM chats WHERE id = ? AND type = 'group'").get(chatId);
-      if (chat) socket.join(chatRoom(chatId));
+      const chat = db.prepare("SELECT id, private FROM chats WHERE id = ? AND type = 'group'").get(chatId) as { id: number; private: number } | undefined;
+      if (chat && (!chat.private || mayReadPrivate(chatId, userId))) socket.join(chatRoom(chatId));
     });
     socket.on('unwatch', (chatId: unknown) => {
       if (typeof chatId !== 'number') return;

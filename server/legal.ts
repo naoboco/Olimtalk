@@ -71,8 +71,8 @@ const PRIVACY = `
 <p class="muted">Exploitant : {operator} · Contact : {contact}</p>
 
 <h2>En bref</h2>
-<p>OlimTalk est une messagerie communautaire. <strong>Les groupes sont publics</strong> : tout ce que vous y publiez
-peut être lu par les autres utilisateurs. Nous ne vendons pas vos données, nous n'affichons pas de publicité et
+<p>OlimTalk est une messagerie communautaire. <strong>Les groupes publics sont lisibles par tous</strong> les utilisateurs ;
+les <strong>groupes privés</strong> ne le sont que par leurs membres. Nous ne vendons pas vos données, nous n'affichons pas de publicité et
 nous n'utilisons aucun traceur publicitaire.</p>
 
 <h2>Données que nous traitons</h2>
@@ -90,8 +90,13 @@ nous n'utilisons aucun traceur publicitaire.</p>
 
 <h2>Qui voit quoi</h2>
 <ul>
-  <li>Les <strong>groupes et communautés</strong> sont publics : nom, description et messages sont visibles de tout utilisateur ;
+  <li>Les <strong>groupes publics et les communautés</strong> : nom, description et messages sont visibles de tout utilisateur ;
       le nom et la description d'un groupe sont visibles de toute personne disposant de son lien d'invitation.</li>
+  <li>Les <strong>groupes privés</strong> : seuls leurs membres lisent les messages, voient les membres, les fichiers et les
+      événements. On y entre avec l'accord d'un administrateur du groupe. Leur nom et leur description restent visibles de
+      qui détient le lien d'invitation et, si le groupe est affiché dans Explorer, de tout utilisateur. Les groupes privés ne
+      sont pas chiffrés de bout en bout : l'équipe de modération peut y accéder pour traiter un signalement, et leurs fichiers
+      sont protégés par une adresse impossible à deviner.</li>
   <li>Les <strong>conversations privées sont chiffrées de bout en bout</strong> : le texte, les photos, vidéos, documents et
       messages vocaux sont chiffrés sur votre appareil et ne peuvent être lus que par vous et votre correspondant. Nous ne
       pouvons pas les lire. Nous voyons en revanche qui écrit à qui et quand, la taille des envois et les réactions (emoji).</li>
@@ -118,10 +123,10 @@ nous n'utilisons aucun traceur publicitaire.</p>
 </ul>
 
 <h2>Traduction automatique</h2>
-<p>Pour afficher dans votre langue un message écrit dans une autre, le texte des <strong>messages publics</strong> est transmis à
+<p>Pour afficher dans votre langue un message écrit dans une autre, le texte des <strong>messages de groupe</strong> (publics ou privés) est transmis à
 un service de traduction (actuellement : {translator_fr}), sans le nom de son auteur. La traduction est conservée avec le message
 et effacée avec lui.</p>
-<p>Vos <strong>messages privés ne sont jamais traduits de cette façon</strong>. Ils ne le sont que si vous l'activez
+<p>Vos <strong>conversations privées (à deux) ne sont jamais traduites de cette façon</strong>. Ils ne le sont que si vous l'activez
 (Profil → Traduction automatique) : par votre propre IA si vous en avez connecté une, sinon votre appareil envoie le texte des
 messages que vous recevez à ce service de traduction ; OlimTalk ne le conserve pas. Vous pouvez désactiver la traduction à
 tout moment.</p>
@@ -151,8 +156,8 @@ même nous — ne peut les récupérer.</p>
 <p class="muted" lang="en">Operator: {operator} · Contact: {contact}</p>
 <div lang="en">
 <h2>In short</h2>
-<p>OlimTalk is a community messenger. <strong>Groups are public</strong>: anything you post in a group can be read by other
-users. We do not sell your data, we show no advertising and we use no advertising trackers.</p>
+<p>OlimTalk is a community messenger. <strong>Public groups can be read by every user</strong>; <strong>private groups</strong>
+only by their members. We do not sell your data, we show no advertising and we use no advertising trackers.</p>
 
 <h2>Data we process</h2>
 <ul>
@@ -169,8 +174,13 @@ users. We do not sell your data, we show no advertising and we use no advertisin
 
 <h2>Who sees what</h2>
 <ul>
-  <li><strong>Groups and communities</strong> are public: name, description and messages are visible to any user; a group's name
+  <li><strong>Public groups and communities</strong>: name, description and messages are visible to any user; a group's name
       and description are visible to anyone who has its invite link.</li>
+  <li><strong>Private groups</strong>: only their members read the messages and see the members, files and events. People come
+      in with the agreement of one of the group's administrators. Their name and description remain visible to whoever holds
+      the invite link and, if the group is shown in Explore, to any user. Private groups are not end-to-end encrypted: the
+      moderation team can access them to handle a report, and their files are protected by an address that cannot be
+      guessed.</li>
   <li><strong>Private conversations are end-to-end encrypted</strong>: text, photos, videos, documents and voice messages are
       encrypted on your device and can only be read by you and the person you are writing to. We cannot read them. We do see
       who writes to whom and when, the size of what is sent, and reactions (emoji).</li>
@@ -196,10 +206,10 @@ users. We do not sell your data, we show no advertising and we use no advertisin
 </ul>
 
 <h2>Automatic translation</h2>
-<p>To show you a message written in another language in yours, the text of <strong>public messages</strong> is sent to a
+<p>To show you a message written in another language in yours, the text of <strong>group messages</strong> (public or private) is sent to a
 translation service (currently: {translator_en}), without its author's name. The translation is kept with the message and
 erased with it.</p>
-<p>Your <strong>private messages are never translated that way</strong>. They are translated only if you turn it on
+<p>Your <strong>private (one-to-one) conversations are never translated that way</strong>. They are translated only if you turn it on
 (Profile → Automatic translation): by your own AI if you connected one, otherwise your device sends the text of the messages
 you receive to that translation service; OlimTalk does not keep it. You can turn translation off at any time.</p>
 
@@ -246,7 +256,8 @@ L'équipe de modération examine les signalements et peut retirer un contenu, su
 
 <h2>Vos contenus</h2>
 <p>Vous restez propriétaire de ce que vous publiez. Vous nous autorisez à l'héberger et à l'afficher aux autres utilisateurs
-dans le cadre du service. Les groupes étant publics, ne publiez rien que vous ne souhaitez pas rendre visible.</p>
+dans le cadre du service. Dans un groupe public, ne publiez rien que vous ne souhaitez pas rendre visible de tous ; dans un
+groupe privé, tous ses membres vous lisent.</p>
 
 <h2>Guide d'intégration</h2>
 <p>Le guide fournit une information générale et des liens vers des organismes officiels. Il ne constitue pas un conseil
@@ -287,7 +298,7 @@ team reviews reports and may remove content, delete a group or suspend an accoun
 
 <h2>Your content</h2>
 <p>You keep ownership of what you post. You allow us to host it and show it to other users as part of the service.
-Groups are public: do not post anything you do not want to be visible.</p>
+In a public group, do not post anything you do not want everyone to see; in a private group, all its members read you.</p>
 
 <h2>Integration guide</h2>
 <p>The guide gives general information and links to official bodies. It is not legal, medical, tax or financial advice:

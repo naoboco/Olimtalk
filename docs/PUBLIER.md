@@ -79,7 +79,7 @@ prendre votre nom de domaine à l'envers (`il.co.olimtalk`, par exemple). Pour l
      transférés par l'utilisateur ; données chiffrées en transit ; aucune donnée vendue ni partagée à des fins
      publicitaires ; suppression possible. Les textes envoyés à l'IA de l'utilisateur partent de son appareil vers
      le fournisseur qu'il a choisi, avec sa propre clé : décrivez-le tel quel. Si la traduction automatique est
-     activée, le texte des messages publics est transmis à votre service de traduction : déclarez-le aussi ;
+     activée, le texte des messages de groupe est transmis à votre service de traduction : déclarez-le aussi ;
    - adresse de la politique de confidentialité : `https://votre-domaine/privacy` ;
    - suppression du compte : dans l'application (*Profil → Supprimer mon compte*) et sur le site, même chemin.
 6. Les comptes développeur personnels récents doivent d'abord mener un test fermé avec un nombre minimal de testeurs

@@ -1,6 +1,6 @@
 // Automatic translation.
 //
-//  - Public messages are translated here, once per language, and the result is kept: the
+//  - Group messages (public or private groups) are translated here, once per language, and the result is kept: the
 //    next reader of that language gets it at no cost.
 //  - Private messages are end-to-end encrypted, so this server cannot translate them by
 //    itself. A person may choose to have the messages they receive translated anyway:

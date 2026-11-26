@@ -319,12 +319,46 @@ export function isChatAdmin(chat: ChatRow, user: UserRow): boolean {
   return role === 'owner' || role === 'admin';
 }
 
-/** DMs are private: only their two members may read them. Groups are public. */
+/**
+ * May this person read what is written in the chat?
+ * Public groups: everybody. Private conversations: their two members. Private groups:
+ * their members — and the moderation team, which must be able to look into a report.
+ */
+export function canRead(chat: ChatRow, user: UserRow | null, member?: MemberRow): boolean {
+  if (chat.type === 'group' && !chat.private) return true;
+  if (!user) return false;
+  if (member ?? getMembership(chat.id, user.id)) return true;
+  return chat.type === 'group' && !!user.is_admin;
+}
+
 export function assertCanRead(chat: ChatRow, user: UserRow): MemberRow | undefined {
   const member = getMembership(chat.id, user.id);
-  if (chat.type === 'dm' && !member) throw new HttpError(403, 'forbidden');
+  if (!canRead(chat, user, member)) throw new HttpError(403, chat.type === 'group' ? 'private_group' : 'forbidden');
   return member;
 }
+
+export function hasRequested(chatId: number, userId: number): boolean {
+  return !!db.prepare('SELECT 1 FROM join_requests WHERE chat_id = ? AND user_id = ?').get(chatId, userId);
+}
+
+/**
+ * May this person know that the chat exists (name, description, size)? A private group
+ * that is not listed is only shown to its members, to people holding its invitation link
+ * (who can then ask to enter) and to those already waiting for an answer.
+ */
+export function canSee(chat: ChatRow, user: UserRow | null): boolean {
+  if (chat.type === 'dm') return !!user && !!getMembership(chat.id, user.id);
+  if (!chat.private || chat.listed) return true;
+  return !!user && (canRead(chat, user) || hasRequested(chat.id, user.id));
+}
+
+/** SQL condition keeping the groups a person may find; takes that person's id as its parameter. */
+export const findableSql = (alias: string) =>
+  `(${alias}.private = 0 OR ${alias}.listed = 1 OR EXISTS (SELECT 1 FROM chat_members fm WHERE fm.chat_id = ${alias}.id AND fm.user_id = ?))`;
+
+/** SQL condition keeping the groups whose content a person may read; takes that person's id. */
+export const readableSql = (alias: string) =>
+  `(${alias}.private = 0 OR EXISTS (SELECT 1 FROM chat_members rm WHERE rm.chat_id = ${alias}.id AND rm.user_id = ?))`;
 
 /** Serialise chats for a viewer (membership flags, unread count, last message, DM peer). */
 export function serializeChats(chats: ChatRow[], viewer: UserRow | null): Chat[] {
@@ -368,6 +402,22 @@ export function serializeChats(chats: ChatRow[], viewer: UserRow | null): Chat[]
     for (const r of rows) peers.set(r.chat_id, { user: r, lastRead: r.last_read_id });
   }
 
+  // Private groups: who is waiting (for their administrators), and whether the viewer is.
+  const privateIds = chats.filter((c) => c.type === 'group' && c.private).map((c) => c.id);
+  const waiting = new Map<number, number>();
+  const asked = new Set<number>();
+  if (viewer && privateIds.length) {
+    for (const r of db.prepare(`SELECT chat_id, COUNT(*) n FROM join_requests WHERE chat_id IN (${qs(privateIds.length)}) GROUP BY chat_id`).all(...privateIds) as {
+      chat_id: number;
+      n: number;
+    }[])
+      waiting.set(r.chat_id, r.n);
+    for (const r of db.prepare(`SELECT chat_id FROM join_requests WHERE user_id = ? AND chat_id IN (${qs(privateIds.length)})`).all(viewer.id, ...privateIds) as {
+      chat_id: number;
+    }[])
+      asked.add(r.chat_id);
+  }
+
   const unreadStmt = db.prepare(
     `SELECT COUNT(*) n FROM (SELECT 1 FROM messages WHERE chat_id = ? AND id > ? AND user_id != ?
        AND deleted_at IS NULL AND type != 'system' LIMIT 999)`,
@@ -375,7 +425,10 @@ export function serializeChats(chats: ChatRow[], viewer: UserRow | null): Chat[]
 
   return chats.map((c) => {
     const m = members.get(c.id);
-    const last = lastRows.find((r) => r.id === c.last_message_id);
+    // Someone outside a private group learns that it exists, never what is said in it.
+    const readable = canRead(c, viewer, m);
+    const role = viewer ? effectiveRole(m, viewer) : null;
+    const last = readable ? lastRows.find((r) => r.id === c.last_message_id) : undefined;
     const peer = peers.get(c.id);
     const chat: Chat = {
       id: c.id,
@@ -391,14 +444,18 @@ export function serializeChats(chats: ChatRow[], viewer: UserRow | null): Chat[]
       communityId: c.community_id,
       communityName: communities.find((x) => x.id === c.community_id)?.name ?? null,
       isAnnouncement: !!c.is_announcement,
-      inviteCode: c.invite_code,
+      inviteCode: readable ? c.invite_code : null,
       memberCount: c.member_count,
       sendPolicy: c.send_policy,
       pinPolicy: c.pin_policy,
+      isPrivate: c.type === 'group' && !!c.private,
+      listed: !!c.listed,
       createdAt: c.created_at,
-      lastActivity: c.last_activity,
+      lastActivity: readable ? c.last_activity : c.created_at,
       isMember: !!m,
-      role: viewer ? effectiveRole(m, viewer) : null,
+      requested: asked.has(c.id),
+      pendingRequests: role === 'owner' || role === 'admin' ? (waiting.get(c.id) ?? 0) : 0,
+      role,
       muted: !!m?.muted,
       pinned: !!m?.pinned,
       archived: !!m?.archived,

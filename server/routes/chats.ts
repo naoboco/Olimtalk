@@ -1,16 +1,20 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { CITIES } from '../../shared/data.ts';
-import type { InvitePreview, Member, Role } from '../../shared/types.ts';
+import type { InvitePreview, JoinRequest, Member, Role } from '../../shared/types.ts';
 import { me, requireAuth } from '../auth.ts';
 import {
   assertCanRead,
+  canRead,
+  canSee,
   communityRole,
   effectiveRole,
+  findableSql,
   getChat,
   getCommunity,
   getMembership,
   getUser,
+  hasRequested,
   isBlockedEitherWay,
   isChatAdmin,
   joinChat,
@@ -23,7 +27,7 @@ import {
   toUserPublic,
 } from '../core.ts';
 import { db, tx, type ChatRow, type CommunityRow, type UserRow } from '../db.ts';
-import { emitToChat, emitToUser, subscribe } from '../realtime.ts';
+import { dropOutsiders, emitToChat, emitToUser, subscribe } from '../realtime.ts';
 import {
   HttpError,
   bad,
@@ -44,6 +48,7 @@ import {
 export const router = Router();
 
 const createLimit = rateLimiter(10, 60 * 60_000);
+const requestLimit = rateLimiter(30, 60 * 60_000);
 const cityKeys = new Set(CITIES.map((c) => c.key));
 const zEmoji = z.string().min(1).max(16);
 
@@ -62,7 +67,9 @@ router.get('/chats', requireAuth, (req, res) => {
 
 router.get('/chats/:id', requireAuth, (req, res) => {
   const chat = getChat(intParam(req, 'id'));
-  assertCanRead(chat, me(req));
+  if (chat.type === 'dm') assertCanRead(chat, me(req));
+  // A private group that is not listed does not exist for those who have nothing to do with it.
+  else if (!canSee(chat, me(req))) throw new HttpError(404, 'chat_not_found');
   res.json({ chat: serializeChat(chat, me(req)) });
 });
 
@@ -82,6 +89,9 @@ router.post('/chats', requireAuth, (req, res) => {
       profile: zProfile.nullable().optional(),
       world: zWorld.optional(),
       communityId: z.number().int().positive().nullable().optional(),
+      // Anyone may create a private group: entering it then needs an administrator's agreement.
+      private: z.boolean().default(false),
+      listed: z.boolean().default(true),
     }),
     req.body,
   );
@@ -98,8 +108,8 @@ router.post('/chats', requireAuth, (req, res) => {
     const info = db
       .prepare(
         `INSERT INTO chats (type, world, name, description, emoji, avatar, category, city, profile, community_id,
-           invite_code, created_by, last_activity, created_at)
-         VALUES ('group',?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           invite_code, created_by, last_activity, created_at, private, listed)
+         VALUES ('group',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         world,
@@ -115,6 +125,8 @@ router.post('/chats', requireAuth, (req, res) => {
         user.id,
         t,
         t,
+        +body.private,
+        body.private ? +body.listed : 1,
       );
     const created = getChat(Number(info.lastInsertRowid));
     joinChat(created, user.id, 'owner');
@@ -138,12 +150,17 @@ router.patch('/chats/:id', requireAuth, (req, res) => {
       city: z.string().nullable().optional(),
       sendPolicy: z.enum(['all', 'admins']).optional(),
       pinPolicy: z.enum(['all', 'admins']).optional(),
+      private: z.boolean().optional(),
+      listed: z.boolean().optional(),
     }),
     req.body,
   );
   if (body.city && !cityKeys.has(body.city)) throw bad('unknown_city');
+  // The built-in groups and the announcement groups of communities are public by nature.
+  if (body.private && (chat.seed_key || chat.is_announcement)) throw bad('must_stay_public');
+  const isPrivate = body.private ?? !!chat.private;
   db.prepare(
-    `UPDATE chats SET name=?, description=?, emoji=?, avatar=?, category=?, city=?, send_policy=?, pin_policy=? WHERE id=?`,
+    `UPDATE chats SET name=?, description=?, emoji=?, avatar=?, category=?, city=?, send_policy=?, pin_policy=?, private=?, listed=? WHERE id=?`,
   ).run(
     body.name ?? chat.name,
     body.description ?? chat.description,
@@ -153,10 +170,19 @@ router.patch('/chats/:id', requireAuth, (req, res) => {
     body.city === undefined ? chat.city : body.city,
     body.sendPolicy ?? chat.send_policy,
     body.pinPolicy ?? chat.pin_policy,
+    +isPrivate,
+    isPrivate ? +(body.listed ?? !!chat.listed) : 1,
     chat.id,
   );
   const updated = getChat(chat.id);
   if (body.name && body.name !== chat.name) systemMessage(updated, user.id, { kind: 'renamed', actor: user.name, value: body.name });
+  if (isPrivate && !chat.private) {
+    // Now private: whoever was reading without being a member stops receiving it.
+    dropOutsiders(chat.id);
+  } else if (!isPrivate && chat.private) {
+    // Now public: those who were waiting for an answer simply come in.
+    for (const r of db.prepare('SELECT user_id FROM join_requests WHERE chat_id = ?').all(chat.id) as { user_id: number }[]) admit(getChat(chat.id), r.user_id);
+  }
   emitToChat(chat.id, 'chat:update', { chatId: chat.id });
   res.json({ chat: serializeChat(getChat(chat.id), user) });
 });
@@ -184,11 +210,77 @@ router.delete('/chats/:id', requireAuth, (req, res) => {
 
 // ───────────── membership ─────────────
 
+/** Let someone who asked into a private group, and tell them. */
+function admit(chat: ChatRow, userId: number) {
+  db.prepare('DELETE FROM join_requests WHERE chat_id = ? AND user_id = ?').run(chat.id, userId);
+  if (joinChat(chat, userId)) emitToUser(userId, 'chat:approved', { chatId: chat.id, name: chat.name });
+}
+
+const chatAdmins = (chatId: number) =>
+  (db.prepare("SELECT user_id FROM chat_members WHERE chat_id = ? AND role IN ('owner', 'admin')").all(chatId) as { user_id: number }[]).map((r) => r.user_id);
+
+/**
+ * Enter a group. A public group is joined at once; for a private one the person's request
+ * waits for an administrator. Returns true when it is a request.
+ */
+function enter(chat: ChatRow, user: UserRow): boolean {
+  if (chat.type !== 'group') throw new HttpError(403, 'forbidden');
+  // (the moderation team already has access everywhere)
+  if (!chat.private || user.is_admin || getMembership(chat.id, user.id)) {
+    joinChat(chat, user.id);
+    return false;
+  }
+  if (!hasRequested(chat.id, user.id)) {
+    if (!requestLimit(user.id)) throw new HttpError(429, 'too_many_requests');
+    db.prepare('INSERT OR IGNORE INTO join_requests (chat_id, user_id, created_at) VALUES (?,?,?)').run(chat.id, user.id, now());
+    for (const adminId of chatAdmins(chat.id)) emitToUser(adminId, 'chat:request', { chatId: chat.id, chatName: chat.name, userName: user.name });
+  }
+  return true;
+}
+
 router.post('/chats/:id/join', requireAuth, (req, res) => {
   const user = me(req);
   const chat = getChat(intParam(req, 'id'));
-  if (chat.type !== 'group') throw new HttpError(403, 'forbidden');
-  joinChat(chat, user.id);
+  if (chat.type === 'group' && !canSee(chat, user)) throw new HttpError(404, 'chat_not_found');
+  const requested = enter(chat, user);
+  res.json({ chat: serializeChat(getChat(chat.id), user), requested });
+});
+
+/** Take back my request to enter a private group. */
+router.delete('/chats/:id/join', requireAuth, (req, res) => {
+  const user = me(req);
+  const chat = getChat(intParam(req, 'id'));
+  const info = db.prepare('DELETE FROM join_requests WHERE chat_id = ? AND user_id = ?').run(chat.id, user.id);
+  if (info.changes) for (const adminId of chatAdmins(chat.id)) emitToUser(adminId, 'chat:update', { chatId: chat.id });
+  res.json({ ok: true });
+});
+
+/** For the administrators of a private group: who is asking to enter. */
+router.get('/chats/:id/requests', requireAuth, (req, res) => {
+  const user = me(req);
+  const chat = getChat(intParam(req, 'id'));
+  if (!isChatAdmin(chat, user)) throw new HttpError(403, 'forbidden');
+  const rows = db
+    .prepare('SELECT u.*, r.created_at AS r_created FROM join_requests r JOIN users u ON u.id = r.user_id WHERE r.chat_id = ? ORDER BY r.created_at LIMIT 200')
+    .all(chat.id) as (UserRow & { r_created: number })[];
+  const requests: JoinRequest[] = rows.map((r) => ({ user: toUserPublic(r), createdAt: r.r_created }));
+  res.json({ requests });
+});
+
+router.post('/chats/:id/requests/:userId', requireAuth, (req, res) => {
+  const user = me(req);
+  const chat = getChat(intParam(req, 'id'));
+  const targetId = intParam(req, 'userId');
+  if (!isChatAdmin(chat, user)) throw new HttpError(403, 'forbidden');
+  const body = parse(z.object({ action: z.enum(['approve', 'decline']) }), req.body);
+  if (!hasRequested(chat.id, targetId)) throw new HttpError(404, 'request_not_found');
+  if (body.action === 'approve') admit(chat, targetId);
+  else {
+    db.prepare('DELETE FROM join_requests WHERE chat_id = ? AND user_id = ?').run(chat.id, targetId);
+    // No announcement of a refusal: the person's screen simply goes back to "ask to join".
+    emitToUser(targetId, 'chat:update', { chatId: chat.id });
+  }
+  for (const adminId of chatAdmins(chat.id)) emitToUser(adminId, 'chat:update', { chatId: chat.id });
   res.json({ chat: serializeChat(getChat(chat.id), user) });
 });
 
@@ -322,7 +414,7 @@ router.post('/dm', requireAuth, (req, res) => {
   res.json({ chat: serializeChat(chat, user) });
 });
 
-// ───────────── explore (every group is public) ─────────────
+// ───────────── explore ─────────────
 
 router.get('/explore', requireAuth, (req, res) => {
   const user = me(req);
@@ -330,8 +422,9 @@ router.get('/explore', requireAuth, (req, res) => {
   const category = strQuery(req, 'category');
   const q = strQuery(req, 'q', 60);
   const offset = intQuery(req, 'offset') ?? 0;
-  const where = ["c.type = 'group'", 'c.world = ?', 'c.is_announcement = 0'];
-  const params: (string | number)[] = [world];
+  // Private groups appear only when they are listed (or are mine); their content stays hidden.
+  const where = ["c.type = 'group'", 'c.world = ?', 'c.is_announcement = 0', findableSql('c')];
+  const params: (string | number)[] = [world, user.id];
   if (category) {
     where.push('c.category = ?');
     params.push(parse(zCategory, category));
@@ -381,8 +474,8 @@ router.get('/invite/:code', (req, res) => {
   else if (found.community) {
     const community = serializeCommunities([found.community], viewer)[0]!;
     const groups = db
-      .prepare('SELECT * FROM chats WHERE community_id = ? ORDER BY is_announcement DESC, member_count DESC LIMIT 6')
-      .all(found.community.id) as ChatRow[];
+      .prepare(`SELECT * FROM chats c WHERE c.community_id = ? AND ${findableSql('c')} ORDER BY c.is_announcement DESC, c.member_count DESC LIMIT 6`)
+      .all(found.community.id, viewer?.id ?? 0) as ChatRow[];
     community.groups = serializeChats(groups, viewer);
     preview = { kind: 'community', community };
   } else throw new HttpError(404, 'invite_not_found');
@@ -393,8 +486,9 @@ router.post('/invite/:code/join', requireAuth, (req, res) => {
   const user = me(req);
   const found = findInvite(String(req.params.code));
   if (found.chat) {
-    joinChat(found.chat, user.id);
-    return res.json({ kind: 'chat', chat: serializeChat(getChat(found.chat.id), user) });
+    // Holding the link of a private group lets you ask; an administrator still decides.
+    const requested = enter(found.chat, user);
+    return res.json({ kind: 'chat', chat: serializeChat(getChat(found.chat.id), user), requested });
   }
   if (found.community) {
     joinCommunity(found.community.id, user.id);

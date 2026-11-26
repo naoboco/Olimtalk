@@ -1,21 +1,23 @@
 # OlimTalk
 
-**La messagerie ouverte des olim.** Des groupes publics sans limite de membres, des communautés,
+**La messagerie ouverte des olim.** Des groupes publics sans limite de membres, des groupes privés, des communautés,
 des stories, des événements et un guide d'intégration — dans quatre « mondes » linguistiques :
 français, anglais, espagnol et russe.
 
 ## Ce que fait la plateforme
 
-**Tout est public, comme un groupe Facebook.** N'importe qui peut trouver un groupe dans *Explorer*,
-le lire sans s'inscrire au groupe, le rejoindre en un clic et le partager. Aucune limite de membres.
-Seules les conversations privées (à deux) sont privées — et **chiffrées de bout en bout**.
+**Ouvert par défaut, comme un groupe Facebook.** N'importe qui peut trouver un groupe public dans *Explorer*,
+le lire sans s'y inscrire, le rejoindre en un clic et le partager. Aucune limite de membres.
+**Chacun peut aussi créer un groupe privé** : on y entre avec l'accord d'un administrateur, et seuls ses membres le
+lisent. Les conversations à deux sont privées et **chiffrées de bout en bout**.
 
 | | |
 |---|---|
 | **Messagerie** | temps réel, réponses, réactions, modification, suppression (pour moi / pour tous), transfert, favoris, mentions `@`, recherche, indicateur de saisie, accusés de lecture en privé |
 | **Messages épinglés** | par les admins, ou par tous si le groupe l'autorise |
 | **Contenus** | photos, vidéos, documents, messages vocaux, sondages, événements avec inscription |
-| **Groupes** | publics, lien d'invitation réinitialisable, QR code, admins, mode « annonces » (seuls les admins écrivent) |
+| **Groupes** | publics ou privés, lien d'invitation réinitialisable, QR code, admins, mode « annonces » (seuls les admins écrivent) |
+| **Groupes privés** | créés par n'importe qui ; demande d'adhésion acceptée ou refusée par un administrateur ; messages, membres, fichiers et événements réservés aux membres ; affichés ou non dans Explorer |
 | **Communautés** | plusieurs groupes réunis, avec un groupe d'annonces |
 | **Stories** | texte, photo ou vidéo pendant 24 h, vues, réponse en privé |
 | **Partage** | WhatsApp, Facebook, Telegram, X, e-mail, lien, et image « story » avec QR code pour Instagram |
@@ -52,7 +54,9 @@ tout message privé qui ne l'est pas.
 
 Ce que cela ne couvre pas, à dire clairement aux utilisateurs :
 
-- **Les groupes sont publics par choix** : ils ne sont pas chiffrés de bout en bout.
+- **Les groupes ne sont pas chiffrés de bout en bout**, privés compris. Un groupe privé est un contrôle d'accès :
+  seuls ses membres le lisent, mais le serveur détient les messages, l'équipe de modération peut l'ouvrir pour
+  traiter un signalement, et ses fichiers sont protégés par une adresse impossible à deviner, pas par un mot de passe.
 - **Les métadonnées restent visibles du serveur** : qui écrit à qui, quand, la taille des envois, les réactions.
 - **Mot de passe oublié = messages privés perdus.** Personne ne peut les récupérer, pas même l'exploitant.
 - Les clés ne tournent pas à chaque message (pas de « confidentialité persistante » comme le protocole Signal) :
@@ -60,13 +64,26 @@ Ce que cela ne couvre pas, à dire clairement aux utilisateurs :
 - **Sur le site web**, le code qui chiffre est servi par le serveur : il faut lui faire confiance. Les applications
   mobiles embarquent ce code, ce qui écarte ce risque.
 
+## Groupes privés
+
+À la création d'un groupe, on choisit **Public** ou **Privé** — tout le monde en a le droit.
+
+- **Entrer** : « Demander à rejoindre », depuis Explorer ou le lien d'invitation. La demande attend ; les
+  administrateurs du groupe sont prévenus, voient qui demande, et acceptent ou refusent. Un refus n'est pas annoncé,
+  et la personne peut annuler sa demande.
+- **Dehors, on ne voit rien du contenu** : ni messages, ni membres, ni fichiers, ni événements, ni aperçu dans les
+  listes, ni mises à jour en direct. Seuls le nom, la description et le nombre de membres sont visibles.
+- **Visible dans Explorer** (réglage) : décoché, le groupe n'existe plus pour ceux qui n'ont pas son lien.
+- Un groupe peut passer de public à privé et inversement ; en redevenant public, ceux qui attendaient entrent.
+  Les groupes d'origine (villes, entraide…) et les groupes d'annonces restent publics.
+
 ## Traduction automatique
 
 Chacun lit dans sa langue. Un francophone voit en français le message d'un russophone, qui voit lui-même en russe
 la réponse — dans les groupes, dans la liste des discussions et pour le message épinglé. Sous chaque message
 traduit : « Traduit du russe · Voir l'original ».
 
-- **Messages publics** : traduits par le serveur, **une seule fois par langue**, puis conservés. Le deuxième
+- **Messages des groupes** (publics ou privés) : traduits par le serveur, **une seule fois par langue**, puis conservés. Le deuxième
   lecteur ne coûte rien. Un message modifié est retraduit, un message supprimé emporte ses traductions.
 - **Messages privés** : ils sont chiffrés de bout en bout, le serveur ne peut donc pas les traduire. Ils ne le sont
   que si leur lecteur l'active : par sa propre IA s'il en a connecté une (rien ne passe par OlimTalk), sinon son

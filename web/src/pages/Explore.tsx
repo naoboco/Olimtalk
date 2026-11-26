@@ -16,15 +16,19 @@ export function GroupCard({ chat, onChange }: { chat: Chat; onChange?: (c: Chat)
   const t = useT();
   const navigate = useNavigate();
   const lang = useStore((s) => s.lang);
-  const { error, upsertChat, toast, openShare } = useStore.getState();
+  const { error, openShare, joinGroup, cancelJoinRequest } = useStore.getState();
   const [busy, setBusy] = useState(false);
   const join = async () => {
     setBusy(true);
     try {
-      const r = await api.post<{ chat: Chat }>(`/chats/${chat.id}/join`);
-      upsertChat(r.chat);
-      onChange?.(r.chat);
-      toast(t('joined_group', { name: chat.name }));
+      // A public group is joined at once; a private one receives a request.
+      if (chat.requested) {
+        await cancelJoinRequest(chat);
+        onChange?.({ ...chat, requested: false });
+      } else {
+        await joinGroup(chat);
+        onChange?.(useStore.getState().chats[chat.id] ?? chat);
+      }
     } catch (e) {
       error(e);
     } finally {
@@ -39,6 +43,7 @@ export function GroupCard({ chat, onChange }: { chat: Chat; onChange?: (c: Chat)
           <strong dir="auto">
             {chat.name}
             {chat.isAnnouncement && <Icon name="megaphone" size={14} />}
+            {chat.isPrivate && <Icon name="lock" size={14} />}
           </strong>
           <small dir="auto">{chat.description}</small>
           <span className="group-card-meta">
@@ -59,6 +64,10 @@ export function GroupCard({ chat, onChange }: { chat: Chat; onChange?: (c: Chat)
         {chat.isMember ? (
           <button type="button" className="btn small soft" onClick={() => navigate(`/chats/${chat.id}`)}>
             {t('open')}
+          </button>
+        ) : chat.isPrivate ? (
+          <button type="button" className={`btn small ${chat.requested ? 'soft' : 'primary'}`} onClick={join} disabled={busy}>
+            {t(chat.requested ? 'request_cancel' : 'request_join_short')}
           </button>
         ) : (
           <button type="button" className="btn small primary" onClick={join} disabled={busy}>

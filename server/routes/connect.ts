@@ -60,9 +60,11 @@ export function buildCalendar(user: UserRow, origin: string): string {
       `SELECT e.*, r.status AS rsvp, c.name AS chat_name, c.invite_code FROM events e
        JOIN event_rsvps r ON r.event_id = e.id AND r.user_id = ? AND r.status IN ('going','maybe')
        JOIN chats c ON c.id = e.chat_id
-       WHERE e.starts_at > ? ORDER BY e.starts_at LIMIT 500`,
+       WHERE e.starts_at > ?
+         AND (c.private = 0 OR EXISTS (SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?))
+       ORDER BY e.starts_at LIMIT 500`,
     )
-    .all(user.id, now() - 30 * 86_400_000) as (EventRow & { rsvp: string; chat_name: string; invite_code: string | null })[];
+    .all(user.id, now() - 30 * 86_400_000, user.id) as (EventRow & { rsvp: string; chat_name: string; invite_code: string | null })[];
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//OlimTalk//Events//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:OlimTalk'];
   for (const e of rows) {
     const url = e.invite_code ? `${origin}/join/${e.invite_code}` : origin;

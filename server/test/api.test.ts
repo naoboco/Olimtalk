@@ -998,6 +998,165 @@ test('mailbox: forwarded e-mails are sealed on arrival; only their owner can rea
   assert.equal((await post(noKeys.address, 'test-inbound-secret')).status, 422);
 });
 
+// ───────────────────────── private groups ─────────────────────────
+
+test('private groups: anyone can create one, entering needs an administrator, only members read', async () => {
+  const owner = await Client.register('Rachel');
+  const member = await Client.register('Simon');
+  const asker = await Client.register('Tamar');
+  const stranger = await Client.register('Uri');
+
+  // Anyone may create a private group.
+  const { chat } = await owner.post<{ chat: Chat }>('/api/chats', { name: 'Familles de Raanana', description: 'Entre parents du quartier', private: true }, 201);
+  assert.deepEqual([chat.isPrivate, chat.listed, chat.isMember, chat.role], [true, true, true, 'owner']);
+  const { message: hello } = await owner.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'Le code du portail est 2580' }, 201);
+
+  // Someone outside learns that the group exists — nothing of what is said in it.
+  const outside = (await stranger.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat;
+  assert.deepEqual([outside.name, outside.isPrivate, outside.isMember, outside.lastMessage, outside.inviteCode], ['Familles de Raanana', true, false, null, null]);
+  for (const path of ['messages', 'pins', 'members', 'media', 'search?q=portail']) {
+    assert.equal((await stranger.get<{ error: string }>(`/api/chats/${chat.id}/${path}`, 403)).error, 'private_group', path);
+  }
+  await stranger.post(`/api/chats/${chat.id}/messages`, { text: 'je passe' }, 403);
+  await stranger.post(`/api/messages/${hello.id}/star`, { starred: true }, 403);
+  await stranger.post(`/api/messages/${hello.id}/forward`, { chatIds: [chat.id] }, 403);
+  await stranger.post('/api/reports', { targetType: 'message', targetId: hello.id, reason: 'spam' }, 403);
+  assert.deepEqual((await stranger.post<{ translations: unknown[] }>('/api/translate/messages', { ids: [hello.id], lang: 'en' })).translations, []);
+  const listed = await stranger.get<{ groups: Chat[] }>('/api/explore?world=fr&q=Familles de Raanana');
+  assert.deepEqual(listed.groups.map((g) => [g.name, g.isPrivate, g.lastMessage]), [['Familles de Raanana', true, null]]);
+  // Live updates do not reach someone who merely "watches" it.
+  const strangerSocket = await stranger.socket();
+  try {
+    let leaked = false;
+    strangerSocket.on('message:new', () => (leaked = true));
+    strangerSocket.emit('watch', chat.id);
+    await new Promise((r) => setTimeout(r, 60));
+    await owner.post(`/api/chats/${chat.id}/messages`, { text: 'Réunion jeudi' }, 201);
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(leaked, false);
+  } finally {
+    strangerSocket.close();
+  }
+
+  // Asking to enter: the request waits, the administrators are told.
+  const ownerSocket = await owner.socket();
+  const askerSocket = await asker.socket();
+  const strangerSocket2 = await stranger.socket();
+  try {
+    const told = once<{ chatId: number; userName: string }>(ownerSocket, 'chat:request');
+    const asked = await asker.post<{ chat: Chat; requested: boolean }>(`/api/chats/${chat.id}/join`);
+    assert.deepEqual([asked.requested, asked.chat.isMember, asked.chat.requested, asked.chat.lastMessage], [true, false, true, null]);
+    assert.deepEqual(await told, { chatId: chat.id, chatName: 'Familles de Raanana', userName: 'Tamar' });
+    await asker.post(`/api/chats/${chat.id}/join`); // asking twice changes nothing
+    await asker.get(`/api/chats/${chat.id}/messages`, 403);
+    assert.equal((await owner.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.pendingRequests, 1);
+    assert.equal((await stranger.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.pendingRequests, 0, 'only administrators see the count');
+    const { requests } = await owner.get<{ requests: { user: { name: string } }[] }>(`/api/chats/${chat.id}/requests`);
+    assert.deepEqual(requests.map((r) => r.user.name), ['Tamar']);
+    // Only administrators decide.
+    await asker.get(`/api/chats/${chat.id}/requests`, 403);
+    await asker.post(`/api/chats/${chat.id}/requests/${asker.me.id}`, { action: 'approve' }, 403);
+    await stranger.post(`/api/chats/${chat.id}/requests/${asker.me.id}`, { action: 'approve' }, 403);
+
+    // Refused: nothing is announced, and the person may ask again later.
+    await owner.post(`/api/chats/${chat.id}/requests/${asker.me.id}`, { action: 'decline' });
+    assert.equal((await asker.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.requested, false);
+    await owner.post(`/api/chats/${chat.id}/requests/${asker.me.id}`, { action: 'approve' }, 404);
+    // A request can be taken back.
+    await asker.post(`/api/chats/${chat.id}/join`);
+    await asker.del(`/api/chats/${chat.id}/join`);
+    assert.equal((await owner.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.pendingRequests, 0);
+
+    // Accepted: the person is in, is told, and reads everything.
+    await asker.post(`/api/chats/${chat.id}/join`);
+    const approved = once<{ chatId: number; name: string }>(askerSocket, 'chat:approved');
+    const after = await owner.post<{ chat: Chat }>(`/api/chats/${chat.id}/requests/${asker.me.id}`, { action: 'approve' });
+    assert.deepEqual([after.chat.memberCount, after.chat.pendingRequests], [2, 0]);
+    assert.deepEqual(await approved, { chatId: chat.id, name: 'Familles de Raanana' });
+    const inside = await asker.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+    assert.ok(inside.messages.some((m) => m.text === 'Le code du portail est 2580'));
+    const mine = (await asker.get<{ chats: Chat[] }>('/api/chats')).chats.find((c) => c.id === chat.id)!;
+    assert.ok(mine.isMember && mine.inviteCode && mine.lastMessage);
+
+    // A simple member does not handle requests.
+    await member.post(`/api/chats/${chat.id}/join`);
+    await asker.post(`/api/chats/${chat.id}/requests/${member.me.id}`, { action: 'approve' }, 403);
+    await owner.post(`/api/chats/${chat.id}/requests/${member.me.id}`, { action: 'approve' });
+
+    // Events of a private group are for its members; a kept message is no longer shown once out.
+    const { message: ev } = await owner.post<{ message: Message }>(`/api/chats/${chat.id}/events`, { title: 'Pique-nique des familles', startsAt: Date.now() + 86_400_000 }, 201);
+    const titles = async (c: Client, query = 'world=fr') => (await c.get<{ events: { title: string }[] }>(`/api/events?${query}`)).events.map((e) => e.title);
+    assert.ok((await titles(asker)).includes('Pique-nique des familles'));
+    assert.ok(!(await titles(stranger)).includes('Pique-nique des familles'));
+    await stranger.post(`/api/events/${ev.event!.id}/rsvp`, { status: 'going' }, 403);
+    assert.equal((await stranger.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.isMember, false, 'answering an event is not a way in');
+    await member.post(`/api/events/${ev.event!.id}/rsvp`, { status: 'going' });
+    await member.post(`/api/messages/${hello.id}/star`, { starred: true });
+    assert.equal((await member.get<{ messages: Message[] }>('/api/starred')).messages.length, 1);
+    const feed = await member.get<{ url: string }>('/api/me/calendar-feed');
+    const feedPath = new URL(feed.url).pathname;
+    assert.match(await (await fetch(base + feedPath)).text(), /Pique-nique des familles/);
+    await owner.del(`/api/chats/${chat.id}/members/${member.me.id}`);
+    await member.get(`/api/chats/${chat.id}/messages`, 403);
+    assert.equal((await member.get<{ messages: Message[] }>('/api/starred')).messages.length, 0);
+    assert.ok(!(await titles(member, 'mine=1')).includes('Pique-nique des familles'));
+    assert.doesNotMatch(await (await fetch(base + feedPath)).text(), /Pique-nique des familles/);
+
+    // The moderation team can look into a private group; it is never a way into private conversations.
+    assert.ok((await admin.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`)).messages.length > 0);
+
+    // An invitation link lets its holder ask — an administrator still decides.
+    const link = (await owner.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.inviteCode!;
+    const preview = (await (await fetch(`${base}/api/invite/${link}`)).json()) as { chat: Chat };
+    assert.deepEqual([preview.chat.name, preview.chat.isPrivate, preview.chat.lastMessage], ['Familles de Raanana', true, null]);
+    const viaLink = await stranger.post<{ requested: boolean; chat: Chat }>(`/api/invite/${link}/join`);
+    assert.deepEqual([viaLink.requested, viaLink.chat.isMember], [true, false]);
+
+    // Made public again: whoever was waiting simply comes in.
+    const opened = once<{ chatId: number }>(strangerSocket2, 'chat:approved');
+    await owner.patch(`/api/chats/${chat.id}`, { private: false });
+    assert.equal((await opened).chatId, chat.id);
+    assert.equal((await stranger.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.isMember, true);
+  } finally {
+    ownerSocket.close();
+    askerSocket.close();
+    strangerSocket2.close();
+  }
+
+  // A public group that becomes private stops reaching those who were only reading it.
+  const { chat: open } = await owner.post<{ chat: Chat }>('/api/chats', { name: 'Bons plans Raanana' }, 201);
+  const reader = await Client.register('Vera');
+  const readerSocket = await reader.socket();
+  try {
+    readerSocket.emit('watch', open.id);
+    await new Promise((r) => setTimeout(r, 60));
+    const seen: string[] = [];
+    readerSocket.on('message:new', (m: Message) => seen.push(m.text));
+    await owner.post(`/api/chats/${open.id}/messages`, { text: 'visible par tous' }, 201);
+    await new Promise((r) => setTimeout(r, 120));
+    await owner.patch(`/api/chats/${open.id}`, { private: true, listed: false });
+    await new Promise((r) => setTimeout(r, 120));
+    await owner.post(`/api/chats/${open.id}/messages`, { text: 'entre membres seulement' }, 201);
+    await new Promise((r) => setTimeout(r, 120));
+    assert.deepEqual(seen, ['visible par tous']);
+  } finally {
+    readerSocket.close();
+  }
+
+  // Not listed: it cannot be found, and does not exist for those who have nothing to do with it.
+  assert.equal((await reader.get<{ groups: Chat[] }>('/api/explore?world=fr&q=Bons plans Raanana')).groups.length, 0);
+  assert.equal((await owner.get<{ groups: Chat[] }>('/api/explore?world=fr&q=Bons plans Raanana')).groups.length, 1, 'its members still find it');
+  await reader.get(`/api/chats/${open.id}`, 404);
+  await reader.post(`/api/chats/${open.id}/join`, {}, 404);
+  const hiddenLink = (await owner.get<{ chat: Chat }>(`/api/chats/${open.id}`)).chat.inviteCode!;
+  assert.equal((await reader.post<{ requested: boolean }>(`/api/invite/${hiddenLink}/join`)).requested, true);
+  assert.equal((await reader.get<{ chat: Chat }>(`/api/chats/${open.id}`)).chat.requested, true, 'once asked, the person can follow their request');
+
+  // The built-in groups stay public.
+  const builtIn = (await admin.get<{ chats: Chat[] }>('/api/chats')).chats.find((c) => c.name === 'Bienvenue & Entraide')!;
+  await admin.patch(`/api/chats/${builtIn.id}`, { private: true }, 400);
+});
+
 // ───────────────────────── automatic translation ─────────────────────────
 
 test('translation: public messages are translated once per language; private ones only when their reader asks', async () => {

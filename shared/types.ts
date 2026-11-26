@@ -168,10 +168,18 @@ export interface Chat {
   memberCount: number;
   sendPolicy: 'all' | 'admins';
   pinPolicy: 'all' | 'admins';
+  /** A private group: entering needs an administrator's agreement, only members read it. */
+  isPrivate: boolean;
+  /** For a private group: whether it can be found in Explore (its content stays members-only). */
+  listed: boolean;
   createdAt: number;
   lastActivity: number;
   // viewer specific
   isMember: boolean;
+  /** I asked to enter this private group and wait for an answer. */
+  requested: boolean;
+  /** For its administrators: how many people wait for an answer. */
+  pendingRequests: number;
   role: Role | null;
   muted: boolean;
   pinned: boolean;
@@ -223,6 +231,12 @@ export interface StoryGroup {
   stories: Story[];
   allViewed: boolean;
   latest: number;
+}
+
+/** Someone waiting to be let into a private group. */
+export interface JoinRequest {
+  user: UserPublic;
+  createdAt: number;
 }
 
 export interface InvitePreview {

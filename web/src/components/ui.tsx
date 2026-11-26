@@ -251,7 +251,7 @@ export function Toasts() {
   return createPortal(
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((t) => (
-        <button key={t.id} type="button" className={`toast ${t.kind}`} onClick={() => dismiss(t.id)}>
+        <button key={t.id} type="button" className={t.kind === 'error' ? 'toast error' : 'toast'} onClick={() => dismiss(t.id)}>
           {t.text}
         </button>
       ))}

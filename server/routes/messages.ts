@@ -4,6 +4,7 @@ import type { MessagePatchEvent, MessageType, PollEvent, ReactionEvent } from '.
 import { me, requireAuth } from '../auth.ts';
 import {
   assertCanRead,
+  canRead,
   createMessage,
   eraseMessage,
   getChat,
@@ -129,7 +130,14 @@ router.get('/starred', requireAuth, (req, res) => {
        WHERE s.user_id = ? AND m.deleted_at IS NULL ORDER BY s.created_at DESC LIMIT 100`,
     )
     .all(user.id) as MessageRow[];
-  const chatIds = [...new Set(rows.map((r) => r.chat_id))];
+  // A message kept from a private group is no longer shown once I am out of that group.
+  const allowed = new Map<number, boolean>();
+  const mayRead = (chatId: number) => {
+    if (!allowed.has(chatId)) allowed.set(chatId, canRead(getChat(chatId), user));
+    return allowed.get(chatId)!;
+  };
+  const visible = rows.filter((r) => mayRead(r.chat_id));
+  const chatIds = [...new Set(visible.map((r) => r.chat_id))];
   const chats = chatIds.length
     ? (db.prepare(`SELECT id, name, emoji, type FROM chats WHERE id IN (${qs(chatIds.length)})`).all(...chatIds) as {
         id: number;
@@ -138,7 +146,7 @@ router.get('/starred', requireAuth, (req, res) => {
         type: string;
       }[])
     : [];
-  res.json({ messages: serializeMessages(rows, user.id), chats });
+  res.json({ messages: serializeMessages(visible, user.id), chats });
 });
 
 // ───────────── send ─────────────

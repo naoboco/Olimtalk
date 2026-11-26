@@ -5,7 +5,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import type { Report } from '../../shared/types.ts';
 import { me, requireAuth } from '../auth.ts';
-import { attachmentUrls, eraseMessage, getChat, getMembership, getUser, removeOrphanUploads } from '../core.ts';
+import { attachmentUrls, eraseMessage, getChat, getMembership, getUser, removeOrphanUploads, canRead } from '../core.ts';
 import { UPLOAD_DIR, db, type MessageRow } from '../db.ts';
 import { emitToChat, kick } from '../realtime.ts';
 import { HttpError, bad, intParam, now, parse, rateLimiter } from '../util.ts';
@@ -113,8 +113,8 @@ router.post('/reports', requireAuth, (req, res) => {
     const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(body.targetId) as MessageRow | undefined;
     if (m) {
       const chat = getChat(m.chat_id);
-      // A private conversation can only be reported by one of its two members.
-      if (chat.type === 'dm' && !getMembership(chat.id, user.id)) throw new HttpError(403, 'forbidden');
+      // What is private (a conversation, a private group) can only be reported by someone in it.
+      if (!canRead(chat, user)) throw new HttpError(403, 'forbidden');
       snapshot = m.enc ? (body.evidence ?? '🔒') : (m.text || m.type).slice(0, 500);
     }
   } else if (body.targetType === 'story') {

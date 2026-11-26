@@ -71,8 +71,12 @@ export function JoinPage() {
   const join = async () => {
     setBusy(true);
     try {
-      const r = await api.post<{ kind: 'chat' | 'community'; chat?: Chat; community?: Community }>(`/invite/${encodeURIComponent(code)}/join`);
-      if (r.kind === 'chat' && r.chat) {
+      const r = await api.post<{ kind: 'chat' | 'community'; chat?: Chat; community?: Community; requested?: boolean }>(`/invite/${encodeURIComponent(code)}/join`);
+      if (r.kind === 'chat' && r.chat && r.requested) {
+        // A private group: the request now waits for one of its administrators.
+        upsertChat(r.chat);
+        setPreview({ kind: 'chat', chat: r.chat });
+      } else if (r.kind === 'chat' && r.chat) {
         upsertChat(r.chat);
         navigate(`/chats/${r.chat.id}`, { replace: true });
       } else if (r.community) {
@@ -135,7 +139,7 @@ export function JoinPage() {
                 </span>
               )}
               <span className="tag">
-                <Icon name="globe" size={14} /> {t('public_group')}
+                <Icon name={chat?.isPrivate ? 'lock' : 'globe'} size={14} /> {t(chat?.isPrivate ? 'private_group' : 'public_group')}
               </span>
             </div>
             {description && (
@@ -157,6 +161,22 @@ export function JoinPage() {
                 <button type="button" className="btn primary large block" onClick={open}>
                   {t('open')}
                 </button>
+              ) : chat?.isPrivate ? (
+                chat.requested ? (
+                  <div className="notice">
+                    <Icon name="clock" size={18} />
+                    <span>
+                      <strong>{t('request_pending')}</strong> — {t('request_pending_text')}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <p className="muted small">{t('request_join_text')}</p>
+                    <button type="button" className="btn primary large block" onClick={() => void join()} disabled={busy}>
+                      {busy ? <Spinner size={18} /> : t('request_join')}
+                    </button>
+                  </>
+                )
               ) : (
                 <>
                   <button type="button" className="btn primary large block" onClick={() => void join()} disabled={busy}>

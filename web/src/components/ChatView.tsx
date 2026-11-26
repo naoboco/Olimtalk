@@ -6,7 +6,7 @@ import { api } from '../lib/api.ts';
 import { compactNumber, formatDay, lastSeen } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
 import { copyText, inviteUrl } from '../lib/share.ts';
-import { getSocket, useStore, type ClientMessage } from '../lib/store.ts';
+import { getSocket, isClosedTo, useStore, type ClientMessage } from '../lib/store.ts';
 import { autoTranslate, translateNow, translationOf } from '../lib/translate.ts';
 import { AiResultDialog, useAi } from './Ai.tsx';
 import { ChatInfo } from './ChatInfo.tsx';
@@ -74,6 +74,8 @@ export function ChatView({ chatId }: { chatId: number }) {
       if (!c) c = (await fetchChat(chatId)) ?? undefined;
       if (cancelled) return;
       if (!c) return setMissing(true);
+      // A private group shows nothing to someone who is not in it (the moderation team excepted).
+      if (isClosedTo(c, me)) return;
       if (!c.isMember) getSocket()?.emit('watch', chatId);
       const s = useStore.getState().msgs[chatId];
       if (!s?.loaded || s.hasNewer) await loadMessages(chatId, 'latest');
@@ -81,7 +83,7 @@ export function ChatView({ chatId }: { chatId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [chatId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [chatId, chat?.isMember]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => setActiveChat(null), []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -269,7 +271,12 @@ export function ChatView({ chatId }: { chatId: number }) {
   let subtitle: string;
   if (typers.length) subtitle = chat.type === 'dm' ? t('typing') : typers.length === 1 ? t('typing_one', { name: typers[0]! }) : t('typing_many', { n: typers.length });
   else if (chat.type === 'dm') subtitle = chat.peer?.online ? t('online') : chat.peer ? lastSeen(chat.peer.lastSeen, lang, t) : '';
-  else subtitle = chat.memberCount > 0 ? `${t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })} · ${t('public_group')}` : t('public_group');
+  else {
+    const kind = t(chat.isPrivate ? 'private_group' : 'public_group');
+    subtitle = chat.memberCount > 0 ? `${t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })} · ${kind}` : kind;
+  }
+  // Outside a private group there is nothing to read: only the way to ask in.
+  const closed = isClosedTo(chat, me);
 
   const shareGroup = () =>
     chat.inviteCode &&
@@ -285,9 +292,8 @@ export function ChatView({ chatId }: { chatId: number }) {
   const join = async () => {
     setJoining(true);
     try {
-      const r = await api.post<{ chat: Chat }>(`/chats/${chat.id}/join`);
-      upsertChat(r.chat);
-      toast(t('joined_group', { name: chat.name }));
+      if (chat.requested) await useStore.getState().cancelJoinRequest(chat);
+      else await useStore.getState().joinGroup(chat);
     } catch (e) {
       error(e);
     } finally {
@@ -401,14 +407,19 @@ export function ChatView({ chatId }: { chatId: number }) {
                   <span className={`chat-sub ${typers.length ? 'typing' : ''}`}>{subtitle}</span>
                 </span>
               </button>
-              <IconButton icon="search" label={t('search')} onClick={() => setSearching(true)} />
-              {chat.type === 'group' && <IconButton icon="share" label={t('share')} onClick={shareGroup} />}
+              {!closed && <IconButton icon="search" label={t('search')} onClick={() => setSearching(true)} />}
+              {chat.type === 'group' && chat.inviteCode && <IconButton icon="share" label={t('share')} onClick={shareGroup} />}
               <IconButton icon="more" label={t('more')} onClick={headerMenu.openFrom} />
             </>
           )}
         </header>
 
         {!connected && <div className="banner warn">{t('reconnecting')}</div>}
+        {chat.pendingRequests > 0 && (
+          <button type="button" className="banner as-button" onClick={() => setInfoOpen(true)}>
+            <Icon name="users" size={16} /> {t('requests_waiting_n', { n: chat.pendingRequests })}
+          </button>
+        )}
         {chat.type === 'dm' && e2e !== 'ready' && (
           <button type="button" className="banner error as-button" onClick={() => setUnlocking(true)}>
             🔒 {t('e2e_locked_banner')}
@@ -465,25 +476,26 @@ export function ChatView({ chatId }: { chatId: number }) {
           </div>
         )}
 
-        <div className="messages" ref={listRef} onScroll={onScroll}>
+        <div className={`messages ${closed ? 'closed' : ''}`} ref={listRef} onScroll={onScroll}>
           {state?.loading && state.hasOlder && (
             <div className="center pad">
               <Spinner />
             </div>
           )}
-          {!state?.loaded && (
+          {!state?.loaded && !closed && (
             <div className="center fill">
               <Spinner />
             </div>
           )}
-          {state?.loaded && !state.hasOlder && chat.type === 'group' && (
+          {(closed || (state?.loaded && !state.hasOlder)) && chat.type === 'group' && (
             <div className="chat-intro">
               <ChatAvatar chat={chat} size={72} />
               <h3>{chat.name}</h3>
               {chat.description && <p dir="auto">{chat.description}</p>}
               <span className="tag">
-                <Icon name="globe" size={14} /> {t('public_group_hint')}
+                <Icon name={chat.isPrivate ? 'lock' : 'globe'} size={14} /> {t(chat.isPrivate ? 'private_group_hint' : 'public_group_hint')}
               </span>
+              {closed && <p>{t('private_group_closed')}</p>}
             </div>
           )}
           {state?.loaded && !state.hasOlder && chat.type === 'dm' && (
@@ -537,7 +549,17 @@ export function ChatView({ chatId }: { chatId: number }) {
           </button>
         )}
 
-        {!chat.isMember ? (
+        {!chat.isMember && chat.isPrivate ? (
+          <div className="joinbar">
+            <div>
+              <strong>{t(chat.requested ? 'request_pending' : 'private_group')}</strong>
+              <span>{t(chat.requested ? 'request_pending_text' : 'request_join_text')}</span>
+            </div>
+            <button type="button" className={`btn ${chat.requested ? 'soft' : 'primary'}`} onClick={join} disabled={joining}>
+              {t(chat.requested ? 'request_cancel' : 'request_join')}
+            </button>
+          </div>
+        ) : !chat.isMember ? (
           <div className="joinbar">
             <div>
               <strong>{t('preview_mode')}</strong>
@@ -578,7 +600,7 @@ export function ChatView({ chatId }: { chatId: number }) {
           onClose={headerMenu.close}
           items={[
             { icon: 'info', label: chat.type === 'group' ? t('group_info') : t('profile'), onClick: () => setInfoOpen(true) },
-            { icon: 'share', label: t('share_group'), onClick: () => void shareGroup(), hidden: chat.type !== 'group' },
+            { icon: 'share', label: t('share_group'), onClick: () => void shareGroup(), hidden: chat.type !== 'group' || !chat.inviteCode },
             {
               icon: 'sparkles',
               label: t('ai_summarize'),

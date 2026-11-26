@@ -214,6 +214,16 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 `);
 
+// People who asked to enter a private group and wait for an administrator's answer.
+db.exec(`
+CREATE TABLE IF NOT EXISTS join_requests (
+  chat_id    INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, user_id)
+);
+`);
+
 // Translations of public messages, kept so that each one is paid for once per language.
 // `text` is NULL when the message needed no translation into that language.
 db.exec(`
@@ -241,6 +251,10 @@ addColumn('users', 'vault', 'TEXT');
 // Privacy choices.
 addColumn('users', 'hide_presence', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'no_receipts', 'INTEGER NOT NULL DEFAULT 0');
+// Private groups: entering needs an administrator's agreement and only members read them.
+// `listed` says whether people can find the group (name and description) to ask.
+addColumn('chats', 'private', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('chats', 'listed', 'INTEGER NOT NULL DEFAULT 1');
 // Automatic translation: on unless switched off (NULL = not chosen yet), private messages
 // only when asked for, and the other languages the person reads without help.
 addColumn('users', 'auto_translate', 'INTEGER');
@@ -327,6 +341,8 @@ export interface ChatRow {
   last_message_id: number | null;
   last_activity: number;
   created_at: number;
+  private: number;
+  listed: number;
 }
 
 export interface MemberRow {

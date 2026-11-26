@@ -3,6 +3,9 @@ import { z } from 'zod';
 import type { EventData, RsvpEvent, StoryGroup } from '../../shared/types.ts';
 import { me, requireAuth } from '../auth.ts';
 import {
+  assertCanRead,
+  findableSql,
+  readableSql,
   communityRole,
   attachmentUrls,
   createMessage,
@@ -46,8 +49,8 @@ const storyLimit = rateLimiter(20, 60 * 60_000);
 function communityWithGroups(row: CommunityRow, viewer: UserRow) {
   const community = serializeCommunities([row], viewer)[0]!;
   const groups = db
-    .prepare('SELECT * FROM chats WHERE community_id = ? ORDER BY is_announcement DESC, member_count DESC, id LIMIT 200')
-    .all(row.id) as ChatRow[];
+    .prepare(`SELECT * FROM chats c WHERE c.community_id = ? AND ${findableSql('c')} ORDER BY c.is_announcement DESC, c.member_count DESC, c.id LIMIT 200`)
+    .all(row.id, viewer.id) as ChatRow[];
   community.groups = serializeChats(groups, viewer);
   return community;
 }
@@ -153,14 +156,21 @@ router.get('/events', requireAuth, (req, res) => {
   const world = parse(zWorld, strQuery(req, 'world') || user.world);
   const mine = strQuery(req, 'mine') === '1';
   const since = now() - 1000 * 60 * 60 * 6; // keep events visible a few hours after they start
+  // The events of a private group are for its members only.
   const rows = mine
     ? (db
         .prepare(
           `SELECT e.* FROM events e JOIN event_rsvps r ON r.event_id = e.id AND r.user_id = ? AND r.status IN ('going','maybe')
-           WHERE e.starts_at > ? ORDER BY e.starts_at LIMIT 100`,
+           JOIN chats c ON c.id = e.chat_id
+           WHERE e.starts_at > ? AND ${readableSql('c')} ORDER BY e.starts_at LIMIT 100`,
         )
-        .all(user.id, since) as EventRow[])
-    : (db.prepare('SELECT * FROM events WHERE world = ? AND starts_at > ? ORDER BY starts_at LIMIT 100').all(world, since) as EventRow[]);
+        .all(user.id, since, user.id) as EventRow[])
+    : (db
+        .prepare(
+          `SELECT e.* FROM events e JOIN chats c ON c.id = e.chat_id
+           WHERE e.world = ? AND e.starts_at > ? AND ${readableSql('c')} ORDER BY e.starts_at LIMIT 100`,
+        )
+        .all(world, since, user.id) as EventRow[]);
   res.json({ events: [...toEventData(rows, user.id).values()] });
 });
 
@@ -198,6 +208,7 @@ router.post('/events/:id/rsvp', requireAuth, (req, res) => {
   const user = me(req);
   const row = db.prepare('SELECT * FROM events WHERE id = ?').get(intParam(req, 'id')) as EventRow | undefined;
   if (!row) throw new HttpError(404, 'event_not_found');
+  assertCanRead(getChat(row.chat_id), user);
   const body = parse(z.object({ status: z.enum(['going', 'maybe', 'no']).nullable() }), req.body);
   if (body.status) {
     db.prepare(

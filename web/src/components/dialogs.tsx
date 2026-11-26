@@ -139,12 +139,16 @@ export function GroupDialog({ chat, community, onClose }: { chat?: Chat; communi
   const [avatar, setAvatar] = useState<string | null>(chat?.avatar ?? null);
   const [category, setCategory] = useState<ChatCategory>(chat?.category ?? 'general');
   const [city, setCity] = useState(chat?.city ?? '');
+  const [isPrivate, setIsPrivate] = useState(chat?.isPrivate ?? false);
+  const [listed, setListed] = useState(chat?.listed ?? true);
   const [busy, setBusy] = useState(false);
+  // The built-in groups and the announcement groups of communities stay public.
+  const canBePrivate = !chat || (!chat.isAnnouncement && chat.category !== 'city') || chat.isPrivate;
 
   const save = async () => {
     setBusy(true);
     try {
-      const body = { name, description, emoji, avatar, category, city: category === 'city' ? city || null : null };
+      const body = { name, description, emoji, avatar, category, city: category === 'city' ? city || null : null, ...(canBePrivate ? { private: isPrivate, listed } : {}) };
       if (chat) {
         const r = await api.patch<{ chat: Chat }>(`/chats/${chat.id}`, body);
         upsertChat(r.chat);
@@ -176,12 +180,6 @@ export function GroupDialog({ chat, community, onClose }: { chat?: Chat; communi
         </>
       }
     >
-      {!chat && (
-        <div className="notice">
-          <Icon name="globe" size={18} />
-          <span>{t('public_group_notice')}</span>
-        </div>
-      )}
       <IconChooser emoji={emoji} avatar={avatar} onEmoji={setEmoji} onAvatar={setAvatar} />
       <Field label={t('group_name')}>
         <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder={t('group_name_ph')} autoFocus dir="auto" />
@@ -209,6 +207,36 @@ export function GroupDialog({ chat, community, onClose }: { chat?: Chat; communi
             ))}
           </select>
         </Field>
+      )}
+      {canBePrivate && (
+        <div className="field">
+          <span className="field-label">{t('group_privacy')}</span>
+          <div className="choice-list" role="radiogroup">
+            <button type="button" role="radio" aria-checked={!isPrivate} className={`choice ${!isPrivate ? 'active' : ''}`} onClick={() => setIsPrivate(false)}>
+              <Icon name="globe" size={20} />
+              <span>
+                <strong>{t('public_group')}</strong>
+                <small>{t('public_group_choice')}</small>
+              </span>
+            </button>
+            <button type="button" role="radio" aria-checked={isPrivate} className={`choice ${isPrivate ? 'active' : ''}`} onClick={() => setIsPrivate(true)}>
+              <Icon name="lock" size={20} />
+              <span>
+                <strong>{t('private_group')}</strong>
+                <small>{t('private_group_choice')}</small>
+              </span>
+            </button>
+          </div>
+          {isPrivate && (
+            <label className="switch-row">
+              <span>
+                {t('private_listed')}
+                <small>{t('private_listed_hint')}</small>
+              </span>
+              <input type="checkbox" className="switch" checked={listed} onChange={(e) => setListed(e.target.checked)} />
+            </label>
+          )}
+        </div>
       )}
     </Modal>
   );

@@ -125,6 +125,9 @@ interface State {
   patchChat: (id: number, patch: Partial<Chat>) => void;
   removeChat: (id: number) => void;
   fetchChat: (id: number) => Promise<Chat | null>;
+  /** Join a public group, or ask to enter a private one. Resolves with true when it is a request. */
+  joinGroup: (chat: Chat) => Promise<boolean>;
+  cancelJoinRequest: (chat: Chat) => Promise<void>;
   setActiveChat: (id: number | null) => void;
   markRead: (chatId: number) => void;
 
@@ -194,6 +197,9 @@ function toPreview(m: Message): Chat['lastMessage'] {
 }
 
 // ───────────── decrypting what the server sends ─────────────
+
+/** A private group seen from outside: its name and description, nothing of what is written in it. */
+export const isClosedTo = (chat: Chat, me: Me | null): boolean => chat.type === 'group' && chat.isPrivate && !chat.isMember && !me?.isAdmin;
 
 /** The other person of a private conversation, as far as this device knows. */
 const peerOf = (chatId: number): number | null => useStore.getState().chats[chatId]?.peer?.id ?? null;
@@ -473,7 +479,16 @@ export const useStore = create<State>((set, get) => ({
   upsertChat(chat) {
     const myId = get().me?.id;
     const alert = myId != null && chat.peer ? noteContactKey(myId, chat.peer.id, chat.peer.publicKey) : false;
-    set((s) => ({ chats: { ...s.chats, [chat.id]: chat }, ...(alert && chat.peer ? { keyAlerts: { ...s.keyAlerts, [chat.peer.id]: true as const } } : {}) }));
+    set((s) => {
+      const next: Partial<State> = { chats: { ...s.chats, [chat.id]: chat } };
+      if (alert && chat.peer) next.keyAlerts = { ...s.keyAlerts, [chat.peer.id]: true };
+      // A group that became private, or that I was taken out of: what was loaded goes away.
+      if (isClosedTo(chat, s.me) && s.msgs[chat.id]) {
+        next.msgs = { ...s.msgs };
+        delete next.msgs[chat.id];
+      }
+      return next;
+    });
     // Its preview may still be ciphertext: decrypt it in the background.
     if (chat.lastMessage?.enc) {
       void openPreview(chat, get().me?.id ?? 0).then((opened) => {
@@ -495,6 +510,18 @@ export const useStore = create<State>((set, get) => ({
       delete msgs[id];
       return { chats, msgs };
     });
+  },
+
+  async joinGroup(chat) {
+    const r = await api.post<{ chat: Chat; requested?: boolean }>(`/chats/${chat.id}/join`);
+    get().upsertChat(r.chat);
+    get().toast(translate(get().lang, r.requested ? 'request_sent' : 'joined_group', { name: chat.name }));
+    return !!r.requested;
+  },
+
+  async cancelJoinRequest(chat) {
+    await api.del(`/chats/${chat.id}/join`);
+    get().patchChat(chat.id, { requested: false });
   },
 
   async fetchChat(id) {
@@ -542,6 +569,10 @@ export const useStore = create<State>((set, get) => ({
   // ───────────── messages ─────────────
 
   async loadMessages(chatId, mode) {
+    // Know the conversation before asking for its messages: from outside a private group
+    // there is nothing to read, and asking would only be refused.
+    const chat = get().chats[chatId] ?? (await get().fetchChat(chatId));
+    if (!chat || isClosedTo(chat, get().me)) return;
     const current = get().msgs[chatId] ?? emptyMsgs();
     if (current.loading) return;
     set((s) => ({ msgs: { ...s.msgs, [chatId]: { ...current, loading: true } } }));
@@ -905,7 +936,27 @@ function connect() {
   });
 
   socket.on('chat:update', (e: { chatId: number }) => {
-    if (store.getState().chats[e.chatId]) void store.getState().fetchChat(e.chatId);
+    const s = store.getState();
+    const known = s.chats[e.chatId];
+    if (!known) return;
+    // A group I am not in may have gone out of my sight (private and no longer listed, request refused).
+    void s.fetchChat(e.chatId).then((chat) => {
+      if (!chat && !known.isMember) store.getState().patchChat(e.chatId, { requested: false });
+    });
+  });
+  // Private groups: someone asks to enter a group I administer…
+  socket.on('chat:request', (e: { chatId: number; chatName: string; userName: string }) => {
+    const s = store.getState();
+    void s.fetchChat(e.chatId);
+    s.toast(translate(s.lang, 'request_received', { user: e.userName, name: e.chatName }));
+  });
+  // …and an administrator let me into one.
+  socket.on('chat:approved', (e: { chatId: number; name: string }) => {
+    const s = store.getState();
+    s.toast(translate(s.lang, 'request_approved', { name: e.name }));
+    void s.fetchChat(e.chatId).then(() => {
+      if (store.getState().activeChatId === e.chatId) void store.getState().loadMessages(e.chatId, 'latest');
+    });
   });
   socket.on('chat:members', (e: { chatId: number; memberCount: number }) => store.getState().patchChat(e.chatId, { memberCount: e.memberCount }));
   const gone = (e: { chatId: number }) => {
