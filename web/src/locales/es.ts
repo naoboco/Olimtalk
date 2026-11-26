@@ -354,6 +354,10 @@ export const es: Dict = {
   account_deleted: 'Tu cuenta fue eliminada.',
   boot_offline: 'No se pudo conectar con OlimTalk. Revisa tu conexión.',
   boot_misconfigured: 'Esta versión de la aplicación no tiene dirección de servidor. Contacta al equipo de OlimTalk.',
+  get_the_app: 'Aún mejor en la aplicación',
+  open_in_app: 'Abrir en la aplicación',
+  legal_terms: 'Condiciones de uso',
+  legal_privacy: 'Privacidad',
   footer_tagline: 'hecho con 💙 para los olim',
 
   // errors

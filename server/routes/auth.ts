@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { CITIES } from '../../shared/data.ts';
@@ -16,8 +14,8 @@ import {
   verifyPassword,
   wantsToken,
 } from '../auth.ts';
-import { getUser, joinChat, toMe, toUserPublic } from '../core.ts';
-import { UPLOAD_DIR, db, tx, type ChatRow, type UserRow } from '../db.ts';
+import { attachmentUrls, getUser, joinChat, removeOrphanUploads, toMe, toUserPublic } from '../core.ts';
+import { db, tx, type ChatRow, type UserRow } from '../db.ts';
 import { emitToChat, emitToUser, kick } from '../realtime.ts';
 import { HttpError, bad, intParam, likeEscape, now, parse, rateLimiter, strQuery, zProfile, zUploadUrl, zWorld } from '../util.ts';
 
@@ -205,23 +203,6 @@ router.patch('/me', requireAuth, async (req, res) => {
   res.json({ me: toMe(updated) });
 });
 
-/** Delete uploaded files that nothing references any more. */
-function removeOrphanUploads(urls: string[]) {
-  const used = db.prepare(
-    `SELECT 1 WHERE EXISTS (SELECT 1 FROM messages WHERE attachment LIKE ? ESCAPE '\\')
-        OR EXISTS (SELECT 1 FROM stories WHERE media LIKE ? ESCAPE '\\')
-        OR EXISTS (SELECT 1 FROM users WHERE avatar = ?)
-        OR EXISTS (SELECT 1 FROM chats WHERE avatar = ?)
-        OR EXISTS (SELECT 1 FROM communities WHERE avatar = ?)`,
-  );
-  for (const url of new Set(urls)) {
-    if (!/^\/uploads\/[A-Za-z0-9_-]+\.[a-z0-9]{1,5}$/.test(url)) continue;
-    const like = `%"${likeEscape(url)}"%`;
-    if (used.get(like, like, url, url, url)) continue;
-    fs.rm(path.join(UPLOAD_DIR, path.basename(url)), { force: true }, () => undefined);
-  }
-}
-
 /**
  * Permanently delete the account and everything its owner posted.
  * Both app stores require this to be possible from inside the app.
@@ -231,20 +212,11 @@ router.post('/me/delete', requireAuth, async (req, res) => {
   const body = parse(z.object({ password: z.string().max(200) }), req.body);
   if (!(await verifyPassword(body.password, user.password_hash))) throw new HttpError(403, 'wrong_password');
 
-  const urls: string[] = [];
-  if (user.avatar) urls.push(user.avatar);
-  const collect = (rows: { json: string | null }[]) => {
-    for (const r of rows) {
-      try {
-        const url = r.json ? (JSON.parse(r.json) as { url?: string }).url : undefined;
-        if (url) urls.push(url);
-      } catch {
-        /* ignore malformed rows */
-      }
-    }
-  };
-  collect(db.prepare('SELECT attachment AS json FROM messages WHERE user_id = ? AND attachment IS NOT NULL').all(user.id) as { json: string }[]);
-  collect(db.prepare('SELECT media AS json FROM stories WHERE user_id = ? AND media IS NOT NULL').all(user.id) as { json: string }[]);
+  const urls = [
+    ...(user.avatar ? [user.avatar] : []),
+    ...attachmentUrls(db.prepare('SELECT attachment AS json FROM messages WHERE user_id = ? AND attachment IS NOT NULL').all(user.id) as { json: string }[]),
+    ...attachmentUrls(db.prepare('SELECT media AS json FROM stories WHERE user_id = ? AND media IS NOT NULL').all(user.id) as { json: string }[]),
+  ];
 
   const groups = db
     .prepare("SELECT c.id, m.role FROM chat_members m JOIN chats c ON c.id = m.chat_id WHERE m.user_id = ? AND c.type = 'group'")

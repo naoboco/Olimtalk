@@ -4,19 +4,22 @@ import type { EventData, RsvpEvent, StoryGroup } from '../../shared/types.ts';
 import { me, requireAuth } from '../auth.ts';
 import {
   communityRole,
+  attachmentUrls,
   createMessage,
+  eraseMessage,
   getChat,
   getCommunity,
   getMembership,
   joinChat,
   joinCommunity,
+  removeOrphanUploads,
   serializeChats,
   serializeCommunities,
   serializeStories,
   toEventData,
   toUserPublic,
 } from '../core.ts';
-import { db, qs, tx, type ChatRow, type CommunityRow, type EventRow, type StoryRow, type UserRow } from '../db.ts';
+import { db, qs, tx, type ChatRow, type CommunityRow, type EventRow, type MessageRow, type StoryRow, type UserRow } from '../db.ts';
 import { emitToAll, emitToChat } from '../realtime.ts';
 import {
   HttpError,
@@ -226,8 +229,9 @@ router.delete('/events/:id', requireAuth, (req, res) => {
   if (!row) throw new HttpError(404, 'event_not_found');
   if (row.created_by !== user.id && !user.is_admin) throw new HttpError(403, 'forbidden');
   db.prepare('DELETE FROM events WHERE id = ?').run(row.id);
-  if (row.message_id) {
-    db.prepare('UPDATE messages SET deleted_at = ? WHERE id = ?').run(now(), row.message_id);
+  const eventMessage = row.message_id ? (db.prepare('SELECT * FROM messages WHERE id = ?').get(row.message_id) as MessageRow | undefined) : undefined;
+  if (row.message_id && eventMessage) {
+    eraseMessage(eventMessage);
     emitToChat(row.chat_id, 'message:patch', { chatId: row.chat_id, id: row.message_id, patch: { deleted: true, text: '' } });
   }
   res.json({ ok: true });
@@ -325,12 +329,20 @@ router.get('/stories/:id/viewers', requireAuth, (req, res) => {
 router.delete('/stories/:id', requireAuth, (req, res) => {
   const user = me(req);
   const id = intParam(req, 'id');
-  const story = db.prepare('SELECT user_id FROM stories WHERE id = ?').get(id) as { user_id: number } | undefined;
+  const story = db.prepare('SELECT user_id, media FROM stories WHERE id = ?').get(id) as { user_id: number; media: string | null } | undefined;
   if (!story) return res.json({ ok: true });
   if (story.user_id !== user.id && !user.is_admin) throw new HttpError(403, 'forbidden');
   db.prepare('DELETE FROM stories WHERE id = ?').run(id);
+  removeOrphanUploads(attachmentUrls([{ json: story.media }]));
   emitToAll('story:new', { userId: story.user_id });
   res.json({ ok: true });
 });
 
-setInterval(() => db.prepare('DELETE FROM stories WHERE expires_at < ?').run(now() - STORY_TTL), 60 * 60_000).unref();
+/** Expired stories are erased for good, media included. */
+export function purgeExpiredStories(before = now()) {
+  const rows = db.prepare('SELECT media AS json FROM stories WHERE expires_at < ?').all(before) as { json: string | null }[];
+  db.prepare('DELETE FROM stories WHERE expires_at < ?').run(before);
+  removeOrphanUploads(attachmentUrls(rows));
+  return rows.length;
+}
+setInterval(() => purgeExpiredStories(), 30 * 60_000).unref();

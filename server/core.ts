@@ -16,7 +16,10 @@ import type {
   UserPublic,
   World,
 } from '../shared/types.ts';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
+  UPLOAD_DIR,
   db,
   qs,
   type ChatRow,
@@ -28,7 +31,7 @@ import {
   type UserRow,
 } from './db.ts';
 import { emitToChat, isOnline, subscribe, unsubscribe } from './realtime.ts';
-import { HttpError, now } from './util.ts';
+import { HttpError, likeEscape, now } from './util.ts';
 
 // ───────────────────────── users ─────────────────────────
 
@@ -536,6 +539,54 @@ export function resolveMentions(chatId: number, text: string): number[] {
     )
     .all(chatId, ...names) as { id: number }[];
   return rows.map((r) => r.id);
+}
+
+// ───────────────────────── uploaded files ─────────────────────────
+
+/** Extract the "/uploads/…" addresses from rows holding an attachment as JSON. */
+export function attachmentUrls(rows: { json: string | null }[]): string[] {
+  const urls: string[] = [];
+  for (const r of rows) {
+    const url = parseJson<{ url?: string }>(r.json)?.url;
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
+/**
+ * Delete uploaded files that nothing references any more. Call it after the rows
+ * that pointed to them are gone (a forwarded copy keeps the file alive).
+ */
+export function removeOrphanUploads(urls: string[]) {
+  if (!urls.length) return;
+  const used = db.prepare(
+    `SELECT 1 WHERE EXISTS (SELECT 1 FROM messages WHERE attachment LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM stories WHERE media LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM users WHERE avatar = ?)
+        OR EXISTS (SELECT 1 FROM chats WHERE avatar = ?)
+        OR EXISTS (SELECT 1 FROM communities WHERE avatar = ?)`,
+  );
+  for (const url of new Set(urls)) {
+    if (!/^\/uploads\/[A-Za-z0-9_-]+\.[a-z0-9]{1,5}$/.test(url)) continue;
+    const like = `%"${likeEscape(url)}"%`;
+    if (used.get(like, like, url, url, url)) continue;
+    fs.rm(path.join(UPLOAD_DIR, path.basename(url)), { force: true }, () => undefined);
+  }
+}
+
+/**
+ * Really erase a message: its text, attachment and poll are removed from the
+ * database (only the "deleted" marker stays), and its file from the disk.
+ */
+export function eraseMessage(row: MessageRow) {
+  db.prepare('UPDATE messages SET deleted_at = ?, text = \'\', attachment = NULL, meta = NULL, pinned_at = NULL, pinned_by = NULL WHERE id = ?').run(
+    now(),
+    row.id,
+  );
+  db.prepare('DELETE FROM reactions WHERE message_id = ?').run(row.id);
+  db.prepare('DELETE FROM poll_votes WHERE message_id = ?').run(row.id);
+  db.prepare('DELETE FROM stars WHERE message_id = ?').run(row.id);
+  removeOrphanUploads(attachmentUrls([{ json: row.attachment }]));
 }
 
 // ───────────────────────── stories ─────────────────────────

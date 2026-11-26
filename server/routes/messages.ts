@@ -5,6 +5,7 @@ import { me, requireAuth } from '../auth.ts';
 import {
   assertCanRead,
   createMessage,
+  eraseMessage,
   getChat,
   getMembership,
   isBlockedEitherWay,
@@ -219,8 +220,8 @@ router.delete('/messages/:id', requireAuth, (req, res) => {
   }
   if (row.user_id !== user.id && !isChatAdmin(chat, user)) throw new HttpError(403, 'forbidden');
   if (row.type === 'system') throw bad('invalid_target');
-  db.prepare('UPDATE messages SET deleted_at = ?, pinned_at = NULL, pinned_by = NULL WHERE id = ?').run(now(), row.id);
-  db.prepare('DELETE FROM reactions WHERE message_id = ?').run(row.id);
+  eraseMessage(row);
+  if (row.type === 'event') db.prepare('DELETE FROM events WHERE message_id = ?').run(row.id);
   const patch: MessagePatchEvent = {
     chatId: row.chat_id,
     id: row.id,

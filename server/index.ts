@@ -6,6 +6,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import helmet from 'helmet';
 import { loadUser } from './auth.ts';
 import { UPLOAD_DIR } from './db.ts';
+import { privacyPage, publicConfig, termsPage } from './legal.ts';
 import { initRealtime } from './realtime.ts';
 import { router as authRoutes } from './routes/auth.ts';
 import { findInvite, router as chatRoutes } from './routes/chats.ts';
@@ -86,6 +87,7 @@ app.use(
 const api = express.Router();
 api.use(loadUser);
 api.get('/health', (_req, res) => res.json({ ok: true }));
+api.get('/config', (_req, res) => res.json(publicConfig()));
 api.use(authRoutes, chatRoutes, messageRoutes, communityRoutes, miscRoutes);
 api.use((_req, _res, next) => next(new HttpError(404, 'not_found')));
 app.use('/api', api);
@@ -132,6 +134,10 @@ function renderIndex(req: Request, og: { title: string; description: string }): 
 const withCount = (members: number, text: string) => `${members > 0 ? `${members} 👥 — ` : ''}${text}`.slice(0, 280);
 
 app.use(express.static(WEB_DIR, { index: false, maxAge: PROD ? '1h' : 0 }));
+
+// Required by the App Store and Google Play: a public privacy policy and the community rules.
+app.get('/privacy', (_req, res) => void res.type('html').send(privacyPage()));
+app.get('/terms', (_req, res) => void res.type('html').send(termsPage()));
 
 app.get('/join/:code', (req, res, next) => {
   const found = findInvite(String(req.params.code));

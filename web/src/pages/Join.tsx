@@ -8,8 +8,39 @@ import { Avatar, ChatAvatar, Empty, Spinner, WorldBadge } from '../components/ui
 import { api } from '../lib/api.ts';
 import { compactNumber } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
+import { IS_NATIVE } from '../lib/platform.ts';
 import { inviteUrl } from '../lib/share.ts';
 import { useStore } from '../lib/store.ts';
+
+/** On the website, once the apps are published: store buttons and "open in the app". */
+function GetTheApp({ code }: { code: string }) {
+  const t = useT();
+  const config = useStore((s) => s.config);
+  if (IS_NATIVE || !config || (!config.appStoreUrl && !config.playStoreUrl)) return null;
+  const touch = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+  return (
+    <div className="get-app">
+      <span className="muted small">{t('get_the_app')}</span>
+      <div className="get-app-buttons">
+        {config.appStoreUrl && (
+          <a className="btn small soft" href={config.appStoreUrl} target="_blank" rel="noopener noreferrer">
+            App Store
+          </a>
+        )}
+        {config.playStoreUrl && (
+          <a className="btn small soft" href={config.playStoreUrl} target="_blank" rel="noopener noreferrer">
+            Google Play
+          </a>
+        )}
+        {touch && (
+          <a className="btn small ghost" href={`olimtalk://join/${encodeURIComponent(code)}`}>
+            {t('open_in_app')}
+          </a>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** Public landing page of an invite link — works for visitors without an account. */
 export function JoinPage() {
@@ -164,6 +195,7 @@ export function JoinPage() {
             >
               <Icon name="share" size={18} /> {t('share')}
             </button>
+            <GetTheApp code={code} />
             <p className="muted small center">{t('join_free_note')}</p>
           </>
         )}

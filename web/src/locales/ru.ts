@@ -354,6 +354,10 @@ export const ru: Dict = {
   account_deleted: 'Ваш аккаунт удалён.',
   boot_offline: 'Не удаётся связаться с OlimTalk. Проверьте подключение.',
   boot_misconfigured: 'В этой версии приложения не указан адрес сервера. Свяжитесь с командой OlimTalk.',
+  get_the_app: 'В приложении ещё удобнее',
+  open_in_app: 'Открыть в приложении',
+  legal_terms: 'Условия использования',
+  legal_privacy: 'Конфиденциальность',
   footer_tagline: 'сделано с 💙 для олим',
 
   // errors

@@ -353,6 +353,10 @@ export const fr = {
   account_deleted: 'Votre compte a été supprimé.',
   boot_offline: 'Impossible de joindre OlimTalk. Vérifiez votre connexion.',
   boot_misconfigured: "Cette version de l'application n'a pas d'adresse de serveur. Contactez l'équipe OlimTalk.",
+  get_the_app: "Encore mieux dans l'application",
+  open_in_app: "Ouvrir dans l'application",
+  legal_terms: "Conditions d'utilisation",
+  legal_privacy: 'Confidentialité',
   footer_tagline: 'fait avec 💙 pour les olim',
 
   // errors

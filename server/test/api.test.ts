@@ -565,3 +565,79 @@ test('account deletion removes the person and their content, and keeps their gro
   // the e-mail address is free again
   await Client.register('Frank');
 });
+
+test('deleting really erases: message text and file, expired stories and their media', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Effacement test' }, 201);
+  await bob.post(`/api/chats/${chat.id}/join`);
+  const upload = async (who: Client, name: string) => {
+    const form = new FormData();
+    form.append('file', new Blob([name], { type: 'image/png' }), name);
+    return (await (await fetch(base + '/api/upload', { method: 'POST', body: form, headers: { Cookie: who.cookie } })).json()) as {
+      url: string;
+      name: string;
+      size: number;
+      mime: string;
+      kind: string;
+    };
+  };
+  const photo = await upload(alice, 'secret.png');
+  const { message } = await alice.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'à effacer', attachment: photo }, 201);
+  // Bob forwards it: his copy must survive Alice's deletion, and keep the file alive.
+  await bob.post(`/api/messages/${message.id}/forward`, { chatIds: [chat.id] });
+  await alice.del(`/api/messages/${message.id}?scope=all`);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal((await fetch(base + photo.url)).status, 200, 'still used by the forwarded copy');
+  let history = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+  const copy = history.messages.find((m) => m.forwarded)!;
+  assert.equal(copy.attachment!.url, photo.url);
+  await bob.del(`/api/messages/${copy.id}?scope=all`);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal((await fetch(base + photo.url)).status, 404, 'no message uses the file any more');
+  // Nothing of the deleted text is left in the database.
+  const { db } = await import('../db.ts');
+  const row = db.prepare('SELECT text, attachment, meta FROM messages WHERE id = ?').get(message.id) as { text: string; attachment: unknown; meta: unknown };
+  assert.deepEqual({ ...row }, { text: '', attachment: null, meta: null });
+
+  // An event disappears from the Events tab when its card is deleted.
+  const { message: ev } = await alice.post<{ message: Message }>(`/api/chats/${chat.id}/events`, { title: 'Événement éphémère', startsAt: Date.now() + 3_600_000 }, 201);
+  await alice.del(`/api/messages/${ev.id}?scope=all`);
+  const events = await alice.get<{ events: { title: string }[] }>('/api/events?world=fr');
+  assert.ok(!events.events.some((e) => e.title === 'Événement éphémère'));
+
+  // Expired stories are purged together with their media.
+  const media = await upload(alice, 'story.png');
+  await alice.post('/api/stories', { media }, 201);
+  const { purgeExpiredStories } = await import('../routes/community.ts');
+  assert.equal(purgeExpiredStories(Date.now()), 0, 'nothing has expired yet');
+  assert.ok(purgeExpiredStories(Date.now() + 25 * 3_600_000) >= 1);
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal((await fetch(base + media.url)).status, 404);
+});
+
+test('reports keep what was reported; private messages can only be reported by a participant', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Signalement test' }, 201);
+  await bob.post(`/api/chats/${chat.id}/join`);
+  const { message } = await bob.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'insulte vite effacée' }, 201);
+  await alice.post('/api/reports', { targetType: 'message', targetId: message.id, reason: 'harassment' }, 201);
+  await bob.del(`/api/messages/${message.id}?scope=all`);
+  const { reports } = await admin.get<{ reports: { targetId: number; targetType: string; excerpt: string }[] }>('/api/admin/reports');
+  assert.equal(reports.find((r) => r.targetType === 'message' && r.targetId === message.id)!.excerpt, '🚫 insulte vite effacée');
+
+  const dm = await alice.post<{ chat: Chat }>('/api/dm', { userId: bob.me.id });
+  const { message: secret } = await alice.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { text: 'confidentiel' }, 201);
+  await admin.post('/api/reports', { targetType: 'message', targetId: secret.id, reason: 'other' }, 403);
+  await bob.post('/api/reports', { targetType: 'message', targetId: secret.id, reason: 'other' }, 201);
+});
+
+test('store requirements: public privacy policy, terms and app links', async () => {
+  for (const path of ['/privacy', '/terms']) {
+    const res = await fetch(base + path);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /text\/html/);
+    const html = await res.text();
+    assert.match(html, /OlimTalk/);
+    assert.match(html, /LEGAL_OPERATOR/, 'says so when the operator has not been filled in');
+  }
+  const config = (await (await fetch(base + '/api/config')).json()) as { appStoreUrl: string | null; playStoreUrl: string | null };
+  assert.deepEqual([config.appStoreUrl, config.playStoreUrl], [null, null]);
+});

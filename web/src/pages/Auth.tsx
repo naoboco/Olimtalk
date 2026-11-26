@@ -7,6 +7,7 @@ import { profileKey } from '../components/dialogs.tsx';
 import { Field, Spinner, WorldBadge } from '../components/ui.tsx';
 import { ApiError, api } from '../lib/api.ts';
 import { useT, type Key } from '../lib/i18n.ts';
+import { PUBLIC_ORIGIN } from '../lib/platform.ts';
 import { useStore } from '../lib/store.ts';
 
 export function WorldPicker({ value, onChange }: { value: Lang; onChange: (w: Lang) => void }) {
@@ -206,7 +207,16 @@ export function AuthPage() {
             </div>
           </form>
         )}
-        <p className="muted small center">{t('auth_terms')}</p>
+        <p className="muted small center">
+          {t('auth_terms')}{' '}
+          <a href={`${PUBLIC_ORIGIN}/terms`} target="_blank" rel="noopener noreferrer">
+            {t('legal_terms')}
+          </a>
+          {' · '}
+          <a href={`${PUBLIC_ORIGIN}/privacy`} target="_blank" rel="noopener noreferrer">
+            {t('legal_privacy')}
+          </a>
+        </p>
       </div>
     </div>
   );

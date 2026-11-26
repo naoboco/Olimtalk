@@ -42,6 +42,8 @@ interface State {
   ready: boolean;
   /** The apps: a session exists but the server could not be reached at start-up. */
   bootError: boolean;
+  /** Public settings of the server: store links once the apps are published. */
+  config: { appStoreUrl: string | null; playStoreUrl: string | null; contact: string | null } | null;
   lang: Lang;
   theme: Theme;
   connected: boolean;
@@ -139,6 +141,7 @@ export const useStore = create<State>((set, get) => ({
   me: null,
   ready: false,
   bootError: false,
+  config: null,
   lang: detectLang(),
   theme: loadTheme(),
   connected: false,
@@ -158,6 +161,10 @@ export const useStore = create<State>((set, get) => ({
     applyTheme(get().theme);
     await loadToken();
     set({ bootError: false });
+    void api
+      .get<NonNullable<State['config']>>('/config')
+      .then((config) => set({ config }))
+      .catch(() => undefined);
     try {
       const { me } = await api.get<{ me: Me | null }>('/me');
       get().setMe(me);

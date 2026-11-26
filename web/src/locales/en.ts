@@ -354,6 +354,10 @@ export const en: Dict = {
   account_deleted: 'Your account has been deleted.',
   boot_offline: 'Could not reach OlimTalk. Check your connection.',
   boot_misconfigured: 'This version of the app has no server address. Please contact the OlimTalk team.',
+  get_the_app: 'Even better in the app',
+  open_in_app: 'Open in the app',
+  legal_terms: 'Terms of use',
+  legal_privacy: 'Privacy',
   footer_tagline: 'made with 💙 for olim',
 
   // errors

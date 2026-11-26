@@ -28,6 +28,24 @@ Chaque monde démarre avec ses groupes : un par ville (23 villes), *Bienvenue & 
 yoga/padel) et un groupe par profil. À l'inscription, on rejoint automatiquement le groupe de sa
 ville et celui de son profil.
 
+## Applications iOS et Android
+
+OlimTalk est distribué comme une **application** pour l'App Store et Google Play. Les projets natifs sont dans
+`ios/` et `android/` ; ils embarquent la même interface que le site et se connectent à votre serveur.
+
+```bash
+VITE_API_URL=https://votre-domaine npm run build:app   # fabrique l'interface et l'installe dans les deux projets
+npm run android                                         # ouvre le projet dans Android Studio
+npm run ios                                             # ouvre le projet dans Xcode (Mac)
+```
+
+Chaque modification est compilée automatiquement pour les deux plateformes sur GitHub (*Actions → Mobile apps*),
+et l'application Android de test s'y télécharge. La marche à suivre complète jusqu'aux boutiques est dans
+**[docs/PUBLIER.md](docs/PUBLIER.md)**.
+
+Le site reste utile : c'est lui qui accueille les personnes qui ouvrent un lien d'invitation sans avoir encore
+l'application, et il sert de version ordinateur.
+
 ## Lancer en local
 
 Il faut [Node.js](https://nodejs.org) 22 ou plus récent.
@@ -73,17 +91,22 @@ server/            API Express, temps réel Socket.IO, base SQLite
   seed.ts          groupes et communautés de départ des quatre mondes
   test/            tests de bout en bout de l'API
 shared/            types et données communs (villes, mondes)
-web/src/           application React (Vite)
+web/src/           interface React (Vite), commune au site et aux applications
   locales/         traductions fr / en / es / ru
   content/         contenu du guide d'intégration et liens officiels
+  lib/platform.ts  site ou application : adresse du serveur, session, liens externes
+  lib/native.ts    pont avec le téléphone : bouton retour, liens d'invitation, barres système
+android/, ios/     projets natifs (Capacitor)
+assets/            images sources des icônes et de l'écran de démarrage
+docs/PUBLIER.md    publication sur l'App Store et Google Play
 ```
 
 ## Limites connues et suite possible
 
 - **Connexion par e-mail et mot de passe.** La connexion par numéro de téléphone (SMS) et la
   réinitialisation du mot de passe par e-mail demandent un prestataire d'envoi : à brancher.
-- **Notifications** : dans le navigateur quand l'application est ouverte. Les notifications push
-  application fermée restent à ajouter.
+- **Notifications push** (application fermée) : à brancher sur vos comptes Firebase et Apple, voir
+  [docs/PUBLIER.md](docs/PUBLIER.md). Sur le site, les notifications du navigateur fonctionnent.
 - **Pas de chiffrement de bout en bout** : les groupes sont publics par nature ; les messages privés
   sont protégés par le serveur, pas chiffrés de bout en bout.
 - **Appels audio / vidéo** : non inclus.
@@ -92,5 +115,5 @@ web/src/           application React (Vite)
 - **Guide d'intégration** : information générale à faire relire. Les adresses des sites officiels
   ont été vérifiées par recherche en novembre 2026 ; les démarches et les liens changent, un
   contrôle régulier est nécessaire.
-- **Avant l'ouverture au public** : rédiger les conditions d'utilisation et la politique de
-  confidentialité, et prévoir une équipe de modération par monde.
+- **Avant l'ouverture au public** : faire relire les conditions d'utilisation et la politique de
+  confidentialité fournies (`/terms`, `/privacy`), et prévoir une équipe de modération par monde.

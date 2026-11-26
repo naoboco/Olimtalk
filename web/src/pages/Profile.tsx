@@ -10,7 +10,7 @@ import { api } from '../lib/api.ts';
 import { formatDay } from '../lib/format.tsx';
 import { useT, type Key } from '../lib/i18n.ts';
 import { uploadFile } from '../lib/media.ts';
-import { PUBLIC_ORIGIN } from '../lib/platform.ts';
+import { PUBLIC_ORIGIN, openExternal } from '../lib/platform.ts';
 import { useStore, type Theme } from '../lib/store.ts';
 import { WorldPicker } from './Auth.tsx';
 
@@ -469,6 +469,8 @@ export function ProfilePage() {
             <Row icon="block" label={t('blocked_users')} hint={me.blocked.length ? String(me.blocked.length) : undefined} onClick={() => setDialog('blocked')} />
             <Row icon="shield" label={t('change_password')} onClick={() => setDialog('password')} />
             {me.isAdmin && <Row icon="flag" label={t('moderation')} hint={t('moderation_hint')} onClick={() => setDialog('moderation')} />}
+            <Row icon="info" label={t('legal_terms')} onClick={() => void openExternal(`${PUBLIC_ORIGIN}/terms`)} />
+            <Row icon="shield" label={t('legal_privacy')} onClick={() => void openExternal(`${PUBLIC_ORIGIN}/privacy`)} />
           </div>
 
           <div className="card list-card">

@@ -208,10 +208,18 @@ CREATE TABLE IF NOT EXISTS reports (
   target_id   INTEGER NOT NULL,
   reason      TEXT NOT NULL,
   details     TEXT NOT NULL DEFAULT '',
+  snapshot    TEXT NOT NULL DEFAULT '',   -- the reported text as it was, for the moderators
   status      TEXT NOT NULL DEFAULT 'open',
   created_at  INTEGER NOT NULL
 );
 `);
+
+// Columns added after the first release (CREATE TABLE IF NOT EXISTS does not add them).
+function addColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+addColumn('reports', 'snapshot', "TEXT NOT NULL DEFAULT ''");
 
 // ---- row types ----
 export interface UserRow {

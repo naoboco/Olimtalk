@@ -5,7 +5,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import type { Report } from '../../shared/types.ts';
 import { me, requireAuth } from '../auth.ts';
-import { getUser } from '../core.ts';
+import { attachmentUrls, eraseMessage, getChat, getMembership, getUser, removeOrphanUploads } from '../core.ts';
 import { UPLOAD_DIR, db, type MessageRow } from '../db.ts';
 import { emitToChat, kick } from '../realtime.ts';
 import { HttpError, bad, intParam, now, parse, rateLimiter } from '../util.ts';
@@ -102,12 +102,26 @@ router.post('/reports', requireAuth, (req, res) => {
     }),
     req.body,
   );
-  db.prepare('INSERT INTO reports (reporter_id, target_type, target_id, reason, details, created_at) VALUES (?,?,?,?,?,?)').run(
+  // Keep what was reported: the author may delete it before a moderator looks.
+  let snapshot = '';
+  if (body.targetType === 'message') {
+    const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(body.targetId) as MessageRow | undefined;
+    if (m) {
+      const chat = getChat(m.chat_id);
+      // A private conversation can only be reported by one of its two members.
+      if (chat.type === 'dm' && !getMembership(chat.id, user.id)) throw new HttpError(403, 'forbidden');
+      snapshot = (m.text || m.type).slice(0, 500);
+    }
+  } else if (body.targetType === 'story') {
+    snapshot = ((db.prepare('SELECT text FROM stories WHERE id = ?').get(body.targetId) as { text: string } | undefined)?.text ?? '').slice(0, 500);
+  }
+  db.prepare('INSERT INTO reports (reporter_id, target_type, target_id, reason, details, snapshot, created_at) VALUES (?,?,?,?,?,?,?)').run(
     user.id,
     body.targetType,
     body.targetId,
     body.reason,
     body.details,
+    snapshot,
     now(),
   );
   res.status(201).json({ ok: true });
@@ -134,6 +148,7 @@ router.get('/admin/reports', requireAuth, (req, res) => {
     target_id: number;
     reason: string;
     details: string;
+    snapshot: string;
     status: Report['status'];
     created_at: number;
   }[];
@@ -142,7 +157,7 @@ router.get('/admin/reports', requireAuth, (req, res) => {
     let chatId: number | null = null;
     if (r.target_type === 'message') {
       const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(r.target_id) as MessageRow | undefined;
-      excerpt = m ? (m.deleted_at ? '🚫' : m.text || m.type) : '—';
+      excerpt = m && !m.deleted_at ? m.text || m.type : `🚫 ${r.snapshot}`.trim();
       chatId = m?.chat_id ?? null;
     } else if (r.target_type === 'user') {
       const u = getUser(r.target_id);
@@ -153,7 +168,7 @@ router.get('/admin/reports', requireAuth, (req, res) => {
       chatId = r.target_id;
     } else {
       const s = db.prepare('SELECT text FROM stories WHERE id = ?').get(r.target_id) as { text: string } | undefined;
-      excerpt = s ? s.text || 'story' : '—';
+      excerpt = s ? s.text || 'story' : `🚫 ${r.snapshot}`.trim();
     }
     return {
       id: r.id,
@@ -183,7 +198,7 @@ router.post('/admin/reports/:id', requireAuth, (req, res) => {
     if (report.target_type === 'message') {
       const m = db.prepare('SELECT * FROM messages WHERE id = ?').get(report.target_id) as MessageRow | undefined;
       if (m && !m.deleted_at) {
-        db.prepare('UPDATE messages SET deleted_at = ?, pinned_at = NULL WHERE id = ?').run(now(), m.id);
+        eraseMessage(m);
         emitToChat(m.chat_id, 'message:patch', {
           chatId: m.chat_id,
           id: m.id,
@@ -191,7 +206,9 @@ router.post('/admin/reports/:id', requireAuth, (req, res) => {
         });
       }
     } else if (report.target_type === 'story') {
+      const story = db.prepare('SELECT media AS json FROM stories WHERE id = ?').get(report.target_id) as { json: string | null } | undefined;
       db.prepare('DELETE FROM stories WHERE id = ?').run(report.target_id);
+      if (story) removeOrphanUploads(attachmentUrls([story]));
     } else if (report.target_type === 'chat') {
       emitToChat(report.target_id, 'chat:deleted', { chatId: report.target_id });
       db.prepare("DELETE FROM chats WHERE id = ? AND type = 'group'").run(report.target_id);
