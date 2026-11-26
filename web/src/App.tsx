@@ -18,6 +18,9 @@ import { ProfilePage } from './pages/Profile.tsx';
 
 // The guide carries a lot of text in four languages: load it on demand.
 const GuidePage = lazy(() => import('./pages/Guide.tsx'));
+// The assistant and the mailbox are optional connections: loaded when opened.
+const AssistantPage = lazy(() => import('./pages/Assistant.tsx'));
+const MailPage = lazy(() => import('./pages/Mail.tsx'));
 
 const TABS: { to: string; icon: IconName; label: Key }[] = [
   { to: '/chats', icon: 'chat', label: 'tab_chats' },
@@ -32,6 +35,7 @@ function Shell() {
   const chats = useStore((s) => s.chats);
   const location = useLocation();
   const unread = useMemo(() => Object.values(chats).reduce((n, c) => n + (c.isMember && !c.muted && !c.archived ? c.unread : 0), 0), [chats]);
+  const mailUnread = useStore((s) => s.mailUnread);
   useEffect(() => {
     document.title = unread ? `(${unread > 99 ? '99+' : unread}) OlimTalk` : 'OlimTalk';
   }, [unread]);
@@ -57,6 +61,7 @@ function Shell() {
         <NavLink to="/me" className={({ isActive }) => `nav-item me ${isActive ? 'active' : ''}`}>
           <span className="nav-icon">
             <Avatar id={me.id} name={me.name} src={me.avatar} size={30} />
+            {mailUnread > 0 && <span className="badge">{mailUnread > 99 ? '99+' : mailUnread}</span>}
           </span>
           <span className="nav-label">{t('tab_me')}</span>
         </NavLink>
@@ -144,6 +149,8 @@ export function App() {
           <Route path="/events" element={<EventsPage />} />
           <Route path="/guide" element={<GuidePage />} />
           <Route path="/me" element={<ProfilePage />} />
+          <Route path="/assistant" element={<AssistantPage />} />
+          <Route path="/mail" element={<MailPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/chats" replace />} />
       </Routes>

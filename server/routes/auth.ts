@@ -248,6 +248,14 @@ router.patch('/me', requireAuth, async (req, res) => {
   res.json({ me: toMe(updated) });
 });
 
+/** Confirm the password before a sensitive action (e.g. resetting the encryption keys). */
+router.post('/me/verify-password', requireAuth, async (req, res) => {
+  const body = parse(z.object({ password: z.string().max(200) }), req.body);
+  if (!loginLimit(`verify:${me(req).id}`)) throw new HttpError(429, 'too_many_requests');
+  if (!(await verifyPassword(body.password, me(req).password_hash))) throw new HttpError(403, 'wrong_password');
+  res.json({ ok: true });
+});
+
 // ───────────── end-to-end encryption keys ─────────────
 
 router.get('/me/keys', requireAuth, (req, res) => {

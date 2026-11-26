@@ -70,21 +70,44 @@ nous n'utilisons aucun traceur publicitaire.</p>
 
 <h2>Données que nous traitons</h2>
 <ul>
-  <li><strong>Compte</strong> : nom, adresse e-mail, mot de passe (conservé sous forme chiffrée non réversible).</li>
+  <li><strong>Compte</strong> : nom, adresse e-mail. Votre <strong>mot de passe ne quitte jamais votre appareil</strong> : nous n'en
+      recevons qu'une clé dérivée, elle-même conservée sous une forme non réversible.</li>
+  <li><strong>Clés de chiffrement</strong> : votre clé publique, et votre clé privée uniquement sous une forme verrouillée par
+      votre mot de passe, que nous ne pouvons pas ouvrir.</li>
   <li><strong>Profil</strong>, visible des autres utilisateurs : nom d'utilisateur, photo, bio, profil (étudiant, entrepreneur…),
       ville, année d'alyah, langue choisie.</li>
   <li><strong>Contenus</strong> : messages, photos, vidéos, documents, messages vocaux, stories, sondages, événements, réactions.</li>
-  <li><strong>Technique</strong> : session de connexion, date de dernière activité, état « en ligne ».</li>
+  <li><strong>Technique</strong> : appareils connectés (type d'appareil ou de navigateur, dates de connexion et de dernière
+      activité), état « en ligne ».</li>
 </ul>
 
 <h2>Qui voit quoi</h2>
 <ul>
   <li>Les <strong>groupes et communautés</strong> sont publics : nom, description et messages sont visibles de tout utilisateur ;
       le nom et la description d'un groupe sont visibles de toute personne disposant de son lien d'invitation.</li>
-  <li>Les <strong>conversations privées</strong> ne sont visibles que des deux participants. Elles sont protégées pendant leur
-      transport et sur nos serveurs, mais ne sont pas chiffrées de bout en bout.</li>
+  <li>Les <strong>conversations privées sont chiffrées de bout en bout</strong> : le texte, les photos, vidéos, documents et
+      messages vocaux sont chiffrés sur votre appareil et ne peuvent être lus que par vous et votre correspondant. Nous ne
+      pouvons pas les lire. Nous voyons en revanche qui écrit à qui et quand, la taille des envois et les réactions (emoji).</li>
+  <li>Si vous <strong>signalez un message privé</strong>, son contenu déchiffré est joint à votre signalement pour que la
+      modération puisse le lire.</li>
+  <li>Dans Profil → Sécurité, vous pouvez masquer votre présence en ligne et ne pas envoyer de confirmations de lecture.</li>
   <li>Les <strong>stories</strong> sont visibles pendant 24 heures par les utilisateurs de votre « monde » linguistique.</li>
   <li>Un contenu <strong>signalé</strong> est consulté par l'équipe de modération.</li>
+</ul>
+
+<h2>Vos connexions (facultatives)</h2>
+<ul>
+  <li><strong>Votre IA</strong> : si vous branchez votre propre assistant (Claude, ChatGPT, Gemini, Mistral ou autre), votre clé
+      d'accès est enregistrée chiffrée par votre mot de passe ; nous ne pouvons pas la lire. Les textes que vous lui soumettez
+      (un message à traduire, un e-mail à expliquer, une discussion à résumer) partent de votre appareil directement vers le
+      fournisseur que vous avez choisi, selon ses propres conditions. OlimTalk ne les reçoit pas.</li>
+  <li><strong>Votre agenda</strong> : le lien privé de votre agenda OlimTalk montre, à quiconque le détient, les événements
+      auxquels vous participez ; gardez-le pour vous, vous pouvez le renouveler à tout moment. Les adresses des agendas que
+      vous connectez sont enregistrées chiffrées. L'application lit ces agendas directement ; sur le site web, leur lecture
+      transite par notre serveur, qui n'en conserve rien.</li>
+  <li><strong>Votre boîte mail</strong> : les e-mails que vous transférez à votre adresse OlimTalk sont reçus par notre serveur,
+      puis chiffrés avec votre clé avant d'être enregistrés. Une fois enregistrés, nous ne pouvons plus les lire ; nous ne
+      conservons en clair que leur date de réception et leur taille.</li>
 </ul>
 
 <h2>Autorisations de l'application</h2>
@@ -94,7 +117,10 @@ ou d'envoyer une photo, une vidéo ou un fichier.</p>
 <h2>Conservation et suppression</h2>
 <p>Vos contenus sont conservés tant que vous ne les supprimez pas. Vous pouvez supprimer un message à tout moment, et
 <strong>supprimer définitivement votre compte</strong> depuis l'application (Profil → Supprimer mon compte) : votre profil,
-vos messages, vos stories et vos fichiers sont alors effacés. Les stories expirées sont effacées automatiquement.</p>
+vos messages, vos stories, vos fichiers, vos e-mails transférés et vos connexions sont alors effacés. Les stories expirées
+sont effacées automatiquement.</p>
+<p><strong>Mot de passe oublié</strong> : vos messages privés sont verrouillés par votre mot de passe. Sans lui, personne — pas
+même nous — ne peut les récupérer.</p>
 
 <h2>Vos droits</h2>
 <p>Vous pouvez accéder à vos données, les corriger (Profil → Modifier mon profil) ou les supprimer. Pour toute demande,
@@ -114,21 +140,43 @@ users. We do not sell your data, we show no advertising and we use no advertisin
 
 <h2>Data we process</h2>
 <ul>
-  <li><strong>Account</strong>: name, email address, password (stored as a non-reversible hash).</li>
+  <li><strong>Account</strong>: name, email address. Your <strong>password never leaves your device</strong>: we only receive a
+      key derived from it, itself stored in a non-reversible form.</li>
+  <li><strong>Encryption keys</strong>: your public key, and your private key only in a form locked by your password, which we
+      cannot open.</li>
   <li><strong>Profile</strong>, visible to other users: username, photo, bio, profile type (student, entrepreneur…), city,
       year of aliyah, chosen language.</li>
   <li><strong>Content</strong>: messages, photos, videos, documents, voice messages, stories, polls, events, reactions.</li>
-  <li><strong>Technical</strong>: login session, last-activity date, "online" status.</li>
+  <li><strong>Technical</strong>: connected devices (type of device or browser, sign-in and last-activity dates), "online"
+      status.</li>
 </ul>
 
 <h2>Who sees what</h2>
 <ul>
   <li><strong>Groups and communities</strong> are public: name, description and messages are visible to any user; a group's name
       and description are visible to anyone who has its invite link.</li>
-  <li><strong>Private conversations</strong> are visible only to their two participants. They are protected in transit and on our
-      servers, but are not end-to-end encrypted.</li>
+  <li><strong>Private conversations are end-to-end encrypted</strong>: text, photos, videos, documents and voice messages are
+      encrypted on your device and can only be read by you and the person you are writing to. We cannot read them. We do see
+      who writes to whom and when, the size of what is sent, and reactions (emoji).</li>
+  <li>If you <strong>report a private message</strong>, its decrypted content is attached to your report so that moderators can
+      read it.</li>
+  <li>In Profile → Security you can hide your online presence and stop sending read receipts.</li>
   <li><strong>Stories</strong> are visible for 24 hours to the users of your language "world".</li>
   <li><strong>Reported</strong> content is reviewed by the moderation team.</li>
+</ul>
+
+<h2>Your connections (optional)</h2>
+<ul>
+  <li><strong>Your AI</strong>: if you plug in your own assistant (Claude, ChatGPT, Gemini, Mistral or another), your access key
+      is stored encrypted by your password; we cannot read it. The texts you submit to it (a message to translate, an e-mail to
+      explain, a chat to summarise) go from your device straight to the provider you chose, under that provider's own terms.
+      OlimTalk does not receive them.</li>
+  <li><strong>Your calendar</strong>: the private link of your OlimTalk calendar shows the events you attend to anyone who holds
+      it; keep it to yourself, and renew it whenever you like. The addresses of the calendars you connect are stored encrypted.
+      The app reads those calendars directly; on the website, reading them passes through our server, which keeps nothing.</li>
+  <li><strong>Your mailbox</strong>: e-mails you forward to your OlimTalk address are received by our server, then encrypted with
+      your key before being stored. Once stored, we can no longer read them; we only keep their arrival date and size in the
+      clear.</li>
 </ul>
 
 <h2>App permissions</h2>
@@ -137,8 +185,10 @@ a video or a file.</p>
 
 <h2>Retention and deletion</h2>
 <p>Your content is kept until you delete it. You can delete a message at any time, and <strong>permanently delete your
-account</strong> from inside the app (Profile → Delete my account): your profile, messages, stories and files are then erased.
-Expired stories are erased automatically.</p>
+account</strong> from inside the app (Profile → Delete my account): your profile, messages, stories, files, forwarded
+e-mails and connections are then erased. Expired stories are erased automatically.</p>
+<p><strong>Forgotten password</strong>: your private messages are locked by your password. Without it nobody — not even us —
+can recover them.</p>
 
 <h2>Your rights</h2>
 <p>You can access your data, correct it (Profile → Edit my profile) or delete it. For any request, write to {contact}.</p>
@@ -178,6 +228,11 @@ dans le cadre du service. Les groupes étant publics, ne publiez rien que vous n
 <p>Le guide fournit une information générale et des liens vers des organismes officiels. Il ne constitue pas un conseil
 juridique, médical, fiscal ou financier : vérifiez toujours auprès de l'organisme compétent.</p>
 
+<h2>Votre IA, votre agenda, votre boîte mail</h2>
+<p>Ces connexions sont facultatives et utilisent vos propres comptes auprès de services tiers : leur usage, leur coût éventuel
+et leurs conditions relèvent de ces services. Les réponses d'une IA peuvent être inexactes : vérifiez toute information
+importante auprès de l'organisme compétent.</p>
+
 <h2>Fin d'utilisation</h2>
 <p>Vous pouvez supprimer votre compte à tout moment depuis l'application. Nous pouvons suspendre un compte qui enfreint
 ces règles.</p>
@@ -213,6 +268,11 @@ Groups are public: do not post anything you do not want to be visible.</p>
 <h2>Integration guide</h2>
 <p>The guide gives general information and links to official bodies. It is not legal, medical, tax or financial advice:
 always check with the relevant body.</p>
+
+<h2>Your AI, your calendar, your mailbox</h2>
+<p>These connections are optional and use your own accounts with third-party services: their use, any cost and their terms
+are a matter between you and those services. Answers from an AI can be wrong: check anything important with the relevant
+body.</p>
 
 <h2>Ending use</h2>
 <p>You can delete your account at any time from inside the app. We may suspend an account that breaks these rules.</p>

@@ -53,22 +53,44 @@ test('private messages: both sides read them, nobody else, and tampering is dete
   const enc = await encryptMessage(alice.privateKey, alice.publicKey, bob.publicKey, ctx, { text: 'Rendez-vous à 18h' });
   assert.ok(!enc.includes('Rendez-vous'));
 
-  assert.deepEqual(await decryptMessage(bob.privateKey, bob.publicKey, false, ctx, enc), { text: 'Rendez-vous à 18h' });
-  assert.deepEqual(await decryptMessage(alice.privateKey, alice.publicKey, true, ctx, enc), { text: 'Rendez-vous à 18h' }, 'the author re-reads it');
-  await assert.rejects(decryptMessage(eve.privateKey, eve.publicKey, false, ctx, enc), /another key/);
+  assert.deepEqual(await decryptMessage(bob.privateKey, bob.publicKey, false, ctx, enc, [alice.publicKey]), { text: 'Rendez-vous à 18h' });
+  assert.deepEqual(await decryptMessage(alice.privateKey, alice.publicKey, true, ctx, enc, [bob.publicKey]), { text: 'Rendez-vous à 18h' }, 'the author re-reads it');
+  await assert.rejects(decryptMessage(eve.privateKey, eve.publicKey, false, ctx, enc, [alice.publicKey]), /another key/);
 
   // Even with the envelope re-addressed to her, an outsider cannot decrypt.
   const forged = JSON.stringify({ ...parseEnvelope(enc)!, t: eve.publicKey });
-  await assert.rejects(decryptMessage(eve.privateKey, eve.publicKey, false, ctx, forged));
+  await assert.rejects(decryptMessage(eve.privateKey, eve.publicKey, false, ctx, forged, [alice.publicKey]));
   // The ciphertext is bound to its conversation and its author.
-  await assert.rejects(decryptMessage(bob.privateKey, bob.publicKey, false, { chatId: 43, senderId: 1 }, enc));
-  await assert.rejects(decryptMessage(bob.privateKey, bob.publicKey, false, { chatId: 42, senderId: 2 }, enc));
+  await assert.rejects(decryptMessage(bob.privateKey, bob.publicKey, false, { chatId: 43, senderId: 1 }, enc, [alice.publicKey]));
+  await assert.rejects(decryptMessage(bob.privateKey, bob.publicKey, false, { chatId: 42, senderId: 2 }, enc, [alice.publicKey]));
   // A flipped bit is rejected.
   const e = parseEnvelope(enc)!;
   const flipped = e.c.slice(0, 30) + (e.c[30] === 'A' ? 'B' : 'A') + e.c.slice(31);
-  await assert.rejects(decryptMessage(bob.privateKey, bob.publicKey, false, ctx, JSON.stringify({ ...e, c: flipped })));
+  await assert.rejects(decryptMessage(bob.privateKey, bob.publicKey, false, ctx, JSON.stringify({ ...e, c: flipped }), [alice.publicKey]));
   // Two encryptions of the same text never look alike.
   assert.notEqual(enc, await encryptMessage(alice.privateKey, alice.publicKey, bob.publicKey, ctx, { text: 'Rendez-vous à 18h' }));
+});
+
+test('a message made with a key that is not the contact\'s is refused, whoever it claims to come from', async () => {
+  const alice = await generateIdentity();
+  const bob = await generateIdentity();
+  const mallory = await generateIdentity(); // whoever relays the messages, the server included
+  const fromBob = { chatId: 42, senderId: 2 };
+  const fromAlice = { chatId: 42, senderId: 1 };
+
+  // Slipped into the conversation under Bob's name: a valid envelope, but made with Mallory's key.
+  const fake = await encryptMessage(mallory.privateKey, mallory.publicKey, alice.publicKey, fromBob, { text: 'Envoie-moi ton code' });
+  await assert.rejects(decryptMessage(alice.privateKey, alice.publicKey, false, fromBob, fake, [bob.publicKey]), /unknown contact key/);
+
+  // Same trick to put words in Alice's own mouth on her other device: an envelope that
+  // names her key as the author and Mallory's as the recipient.
+  const shared = await encryptMessage(mallory.privateKey, mallory.publicKey, alice.publicKey, fromAlice, { text: 'Je n\'ai jamais écrit ça' });
+  const asAlice = JSON.stringify({ ...parseEnvelope(shared)!, f: alice.publicKey, t: mallory.publicKey });
+  await assert.rejects(decryptMessage(alice.privateKey, alice.publicKey, true, fromAlice, asAlice, [bob.publicKey]), /unknown contact key/);
+
+  // The real thing still opens.
+  const real = await encryptMessage(bob.privateKey, bob.publicKey, alice.publicKey, fromBob, { text: 'À demain' });
+  assert.deepEqual(await decryptMessage(alice.privateKey, alice.publicKey, false, fromBob, real, [bob.publicKey]), { text: 'À demain' });
 });
 
 test('after a key reset, old messages still open for the person who kept their key', async () => {
@@ -77,9 +99,9 @@ test('after a key reset, old messages still open for the person who kept their k
   const bobNew = await generateIdentity();
   const ctx = { chatId: 7, senderId: 2 };
   const fromOldBob = await encryptMessage(bobOld.privateKey, bobOld.publicKey, alice.publicKey, ctx, { text: 'avant' });
-  assert.deepEqual(await decryptMessage(alice.privateKey, alice.publicKey, false, ctx, fromOldBob), { text: 'avant' });
+  assert.deepEqual(await decryptMessage(alice.privateKey, alice.publicKey, false, ctx, fromOldBob, [bobOld.publicKey, bobNew.publicKey]), { text: 'avant' });
   // Bob, on his new key, can no longer read what he wrote with the old one.
-  await assert.rejects(decryptMessage(bobNew.privateKey, bobNew.publicKey, true, ctx, fromOldBob), /another key/);
+  await assert.rejects(decryptMessage(bobNew.privateKey, bobNew.publicKey, true, ctx, fromOldBob, [alice.publicKey]), /another key/);
 });
 
 test('files are encrypted with their own random key', async () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Attachment, Chat, Member, Message } from '../../../shared/types.ts';
+import { complete, isConfigured, rewriteRequest } from '../lib/ai/index.ts';
 import { api } from '../lib/api.ts';
 import { formatDuration } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
@@ -33,6 +34,12 @@ export function Composer({
   const send = useStore((s) => s.send);
   const error = useStore((s) => s.error);
   const toast = useStore((s) => s.toast);
+  const ai = useStore((s) => s.ai);
+  const lang = useStore((s) => s.lang);
+  // Private conversations: files are encrypted on the device before they are uploaded.
+  const secret = chat.type === 'dm';
+  const [rewriting, setRewriting] = useState(false);
+  const aiMenu = useMenu();
   const [text, setText] = useState(() => drafts.get(chat.id) ?? '');
   const [pending, setPending] = useState<{ file: File; preview: string | null } | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -74,7 +81,7 @@ export function Composer({
     async (blob, seconds) => {
       setUploading(true);
       try {
-        const attachment = await uploadVoice(blob, seconds);
+        const attachment = await uploadVoice(blob, seconds, secret);
         await send(chat.id, { attachment, replyTo });
         onClearReply();
       } catch (e) {
@@ -99,7 +106,7 @@ export function Composer({
     if (editing) {
       if (!value && !editing.attachment) return;
       try {
-        if (value !== editing.text) await api.patch(`/messages/${editing.id}`, { text: value });
+        if (value !== editing.text) await useStore.getState().editMessage(editing, value);
         setText(drafts.get(chat.id) ?? '');
         onClearEdit();
       } catch (e) {
@@ -112,7 +119,7 @@ export function Composer({
     if (pending) {
       setUploading(true);
       try {
-        attachment = await uploadFile(pending.file);
+        attachment = await uploadFile(pending.file, secret);
       } catch (e) {
         setUploading(false);
         error(e);
@@ -187,6 +194,20 @@ export function Composer({
     if (e.target.value && now - lastTyping.current > 2500) {
       lastTyping.current = now;
       getSocket()?.emit('typing', chat.id);
+    }
+  };
+
+  // "My AI": polish or translate the draft with the assistant the person plugged in.
+  const rewrite = async (how: 'improve' | 'hebrew' | 'english') => {
+    if (!isConfigured(ai ?? undefined) || !text.trim()) return;
+    setRewriting(true);
+    try {
+      setText((await complete(ai!, rewriteRequest(text.trim(), how, lang))).trim());
+      area.current?.focus();
+    } catch {
+      toast(t('ai_error'), 'error');
+    } finally {
+      setRewriting(false);
     }
   };
 
@@ -275,6 +296,9 @@ export function Composer({
       <div className="composer">
         <IconButton icon="smile" label={t('emoji')} onClick={() => setEmojiOpen((v) => !v)} active={emojiOpen} />
         {!editing && <IconButton icon="clip" label={t('attach')} onClick={attachMenu.openFrom} />}
+        {ai && text.trim().length > 2 && (
+          <IconButton icon="sparkles" label={t('ai_rewrite')} onClick={aiMenu.openFrom} disabled={rewriting} className={rewriting ? 'pulse' : ''} />
+        )}
         <textarea
           ref={area}
           rows={1}
@@ -323,6 +347,19 @@ export function Composer({
         hidden
         onChange={(e) => (pickFile(e.target.files?.[0]), (e.target.value = ''))}
       />
+      {aiMenu.at && (
+        <Menu
+          x={aiMenu.at.x + 140}
+          y={aiMenu.at.y - 200}
+          onClose={aiMenu.close}
+          header={<div className="menu-title">{t('ai_mine')}</div>}
+          items={[
+            { icon: 'sparkles', label: t('ai_improve'), onClick: () => void rewrite('improve') },
+            { icon: 'globe', label: t('ai_to_hebrew'), onClick: () => void rewrite('hebrew') },
+            { icon: 'globe', label: t('ai_to_english'), onClick: () => void rewrite('english') },
+          ]}
+        />
+      )}
       {attachMenu.at && (
         <Menu
           x={attachMenu.at.x + 180}
@@ -331,7 +368,8 @@ export function Composer({
           items={[
             { icon: 'image', label: t('attach_media'), onClick: () => mediaInput.current?.click() },
             { icon: 'file', label: t('attach_file'), onClick: () => fileInput.current?.click() },
-            { icon: 'poll', label: t('attach_poll'), onClick: onPoll },
+            // A poll is counted by the server, which must not read private conversations.
+            { icon: 'poll', label: t('attach_poll'), onClick: onPoll, hidden: secret },
             { icon: 'calendar', label: t('attach_event'), onClick: onEvent, hidden: chat.type !== 'group' },
           ]}
         />

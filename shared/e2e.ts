@@ -194,13 +194,29 @@ export function parseEnvelope(enc: string): Envelope | null {
 
 /**
  * Decrypt a message of a conversation I take part in. `mine` tells whether I wrote it.
- * Throws when it was encrypted for another key (e.g. before I reset mine) or tampered with.
+ *
+ * `contactKeys` are the public keys this device knows for the other person. The envelope
+ * names the key at its other end, and anyone can make an envelope that names a key of
+ * their own: accepting only known keys is what stops whoever relays the messages (the
+ * server included) from slipping one in under the contact's name — or under mine.
+ *
+ * Throws when the message was encrypted for another key (e.g. before I reset mine),
+ * comes from an unknown key, or was tampered with.
  */
-export async function decryptMessage<T>(privateKey: CryptoKey, ownPublicKey: string, mine: boolean, ctx: EncryptContext, enc: string): Promise<T> {
+export async function decryptMessage<T>(
+  privateKey: CryptoKey,
+  ownPublicKey: string,
+  mine: boolean,
+  ctx: EncryptContext,
+  enc: string,
+  contactKeys: readonly string[],
+): Promise<T> {
   const e = parseEnvelope(enc);
   if (!e) throw new Error('malformed envelope');
   if ((mine ? e.f : e.t) !== ownPublicKey) throw new Error('encrypted for another key');
-  const key = await conversationKey(privateKey, mine ? e.t : e.f, ctx.chatId);
+  const other = mine ? e.t : e.f;
+  if (!contactKeys.includes(other)) throw new Error('unknown contact key');
+  const key = await conversationKey(privateKey, other, ctx.chatId);
   return decryptJson<T>(key, e.c, aadOf(ctx));
 }
 

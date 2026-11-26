@@ -15,11 +15,38 @@ import type {
   World,
 } from '../../../shared/types.ts';
 import { ApiError, api } from './api.ts';
+import {
+  attachmentBlob,
+  deriveSecrets,
+  forgetKeys,
+  hasKeys,
+  loadVault,
+  acknowledgeContactKey,
+  noteContactKey,
+  openEnvelope,
+  resetKeys,
+  restoreKeys,
+  saveVault,
+  sealMessage,
+  setupKeys,
+  uploadEncrypted,
+  type AiSettings,
+  type CalendarLink,
+  type E2eState,
+  type NewAccountKeys,
+  type Secrets,
+  type Vault,
+} from './e2ee.ts';
 import { detectLang, translate, type Key } from './i18n.ts';
 import { API_ORIGIN, TOKEN_MODE, getToken, loadToken, saveToken } from './platform.ts';
 import type { SharePayload } from './share.ts';
 
-export type ClientMessage = Message & { pending?: boolean; failed?: boolean };
+export type ClientMessage = Message & {
+  pending?: boolean;
+  failed?: boolean;
+  /** For an encrypted message: whether this device could read it. */
+  e2e?: E2eState;
+};
 
 export interface MsgState {
   items: ClientMessage[];
@@ -43,7 +70,15 @@ interface State {
   /** The apps: a session exists but the server could not be reached at start-up. */
   bootError: boolean;
   /** Public settings of the server: store links once the apps are published. */
-  config: { appStoreUrl: string | null; playStoreUrl: string | null; contact: string | null } | null;
+  config: { appStoreUrl: string | null; playStoreUrl: string | null; contact: string | null; mail?: boolean } | null;
+  /** 'locked': signed in, but this device does not hold the key that opens private messages. */
+  e2e: 'ready' | 'locked';
+  /** The person's own AI and calendars, decrypted from their vault. */
+  ai: AiSettings | null;
+  calendars: CalendarLink[];
+  mailUnread: number;
+  /** Contacts (by user id) whose security code changed and has not been looked at yet. */
+  keyAlerts: Record<number, true>;
   lang: Lang;
   theme: Theme;
   connected: boolean;
@@ -62,7 +97,13 @@ interface State {
 
   init: () => Promise<void>;
   /** Start a session from a login / sign-up response (the apps also receive a token). */
-  signIn: (session: { me: Me; token?: string }) => Promise<void>;
+  signIn: (session: { me: Me; token?: string }, keys?: { secrets: Secrets; created?: NewAccountKeys }) => Promise<void>;
+  /** Open the private messages on this device with the password. */
+  unlock: (password: string) => Promise<void>;
+  /** New keys: past private messages become unreadable everywhere. */
+  resetEncryption: (password: string) => Promise<void>;
+  loadConnections: () => Promise<void>;
+  saveVault: (patch: Partial<Vault>) => Promise<void>;
   setMe: (me: Me | null) => void;
   deleteAccount: (password: string) => Promise<void>;
   /** Catch up after the app comes back to the foreground. */
@@ -77,6 +118,7 @@ interface State {
 
   loadChats: () => Promise<void>;
   upsertChat: (chat: Chat) => void;
+  acknowledgeKey: (peerId: number) => void;
   patchChat: (id: number, patch: Partial<Chat>) => void;
   removeChat: (id: number) => void;
   fetchChat: (id: number) => Promise<Chat | null>;
@@ -86,8 +128,18 @@ interface State {
   loadMessages: (chatId: number, mode: 'latest' | 'older' | 'newer' | { around: number }) => Promise<void>;
   send: (
     chatId: number,
-    input: { text?: string; attachment?: Attachment | null; replyTo?: Message | null; poll?: { question: string; options: string[]; multiple: boolean } },
+    input: {
+      text?: string;
+      attachment?: Attachment | null;
+      replyTo?: Message | null;
+      poll?: { question: string; options: string[]; multiple: boolean };
+      forwarded?: boolean;
+    },
   ) => Promise<void>;
+  editMessage: (m: Message, text: string) => Promise<void>;
+  forwardMessage: (m: Message, chatIds: number[]) => Promise<void>;
+  /** Decrypt messages fetched outside the main history (pins, favourites…). */
+  openMessages: (messages: Message[]) => Promise<ClientMessage[]>;
   patchMessage: (chatId: number, id: number, fn: (m: ClientMessage) => ClientMessage) => void;
   hideMessage: (chatId: number, id: number) => void;
 
@@ -134,7 +186,36 @@ function toPreview(m: Message): Chat['lastMessage'] {
     deleted: m.deleted,
     createdAt: m.createdAt,
     system: m.system,
+    encrypted: !!m.enc,
   };
+}
+
+// ───────────── decrypting what the server sends ─────────────
+
+/** The other person of a private conversation, as far as this device knows. */
+const peerOf = (chatId: number): number | null => useStore.getState().chats[chatId]?.peer?.id ?? null;
+
+async function openMessage(m: Message, myId: number): Promise<ClientMessage> {
+  let out: ClientMessage = m;
+  const peerId = peerOf(m.chatId);
+  if (m.enc) {
+    const opened = await openEnvelope(m.chatId, m, myId, peerId);
+    out = typeof opened === 'string' ? { ...m, e2e: opened } : { ...m, type: opened.type, text: opened.text, attachment: opened.attachment ?? null, e2e: 'ok' };
+  }
+  if (m.replyTo?.enc) {
+    const quoted = await openEnvelope(m.chatId, m.replyTo, myId, peerId);
+    if (typeof quoted !== 'string') out = { ...out, replyTo: { ...m.replyTo, type: quoted.type, text: quoted.text || quoted.attachment?.name || '', encrypted: false } };
+  }
+  return out;
+}
+
+/** The last message shown in the conversation list. */
+async function openPreview(chat: Chat, myId: number): Promise<Chat> {
+  const preview = chat.lastMessage;
+  if (!preview?.enc) return chat;
+  const opened = await openEnvelope(chat.id, preview, myId, chat.peer?.id);
+  if (typeof opened === 'string') return chat;
+  return { ...chat, lastMessage: { ...preview, type: opened.type, text: opened.text || opened.attachment?.name || '', encrypted: false } };
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -142,6 +223,11 @@ export const useStore = create<State>((set, get) => ({
   ready: false,
   bootError: false,
   config: null,
+  e2e: 'locked',
+  ai: null,
+  calendars: [],
+  mailUnread: 0,
+  keyAlerts: {},
   lang: detectLang(),
   theme: loadTheme(),
   connected: false,
@@ -167,7 +253,10 @@ export const useStore = create<State>((set, get) => ({
       .catch(() => undefined);
     try {
       const { me } = await api.get<{ me: Me | null }>('/me');
+      // Private messages need the key kept on this device: look for it before loading anything.
+      if (me) set({ e2e: (await restoreKeys(me.id, me.publicKey)) ? 'ready' : 'locked' });
       get().setMe(me);
+      if (me) void get().loadConnections();
     } catch {
       // Unreachable server. With a saved session (the apps), showing the sign-in screen
       // would look like a logout: offer to retry instead.
@@ -176,13 +265,84 @@ export const useStore = create<State>((set, get) => ({
     set({ ready: true });
   },
 
-  async signIn(session) {
+  async signIn(session, keys) {
     if (session.token) await saveToken(session.token);
-    get().setMe(session.me);
+    let e2e: State['e2e'] = 'locked';
+    if (keys) {
+      try {
+        await setupKeys(session.me.id, keys.secrets, keys.created);
+        e2e = 'ready';
+      } catch {
+        // The saved key does not open with this password: the person can reset it from their profile.
+      }
+    }
+    set({ e2e });
+    // setupKeys may have just published a first key for an older account.
+    const me = e2e === 'ready' && !session.me.publicKey ? await api.get<{ me: Me }>('/me').then((r) => r.me).catch(() => session.me) : session.me;
+    get().setMe(me);
+    void get().loadConnections();
+  },
+
+  async unlock(password) {
+    const me = get().me;
+    if (!me) return;
+    await setupKeys(me.id, await deriveSecrets(me.email, password));
+    set({ e2e: 'ready', msgs: {} });
+    const fresh = await api.get<{ me: Me }>('/me');
+    get().setMe(fresh.me);
+    await get().loadChats();
+    void get().loadConnections();
+    const active = get().activeChatId;
+    if (active != null) void get().loadMessages(active, 'latest');
+  },
+
+  async resetEncryption(password) {
+    const me = get().me;
+    if (!me) return;
+    const secrets = await deriveSecrets(me.email, password);
+    await api.post('/me/verify-password', { password: secrets.authKey });
+    await resetKeys(me.id, secrets);
+    set({ e2e: 'ready', msgs: {} });
+    const fresh = await api.get<{ me: Me }>('/me');
+    get().setMe(fresh.me);
+    await get().loadChats();
+    // The connections are locked by the password, not by the key pair: they are still there.
+    void get().loadConnections();
+    const active = get().activeChatId;
+    if (active != null) void get().loadMessages(active, 'latest');
+  },
+
+  async loadConnections() {
+    const me = get().me;
+    if (!me) return;
+    if (get().config?.mail !== false) {
+      void api
+        .get<{ unread: number }>('/mail')
+        .then((r) => set({ mailUnread: r.unread }))
+        .catch(() => undefined);
+    }
+    if (!hasKeys()) return;
+    try {
+      const vault = await loadVault();
+      set({ ai: vault.ai ?? null, calendars: vault.calendars ?? [] });
+    } catch {
+      /* the vault stays closed; nothing else depends on it */
+    }
+  },
+
+  async saveVault(patch) {
+    const next = { ...(await loadVault()), ...patch };
+    for (const key of Object.keys(next) as (keyof Vault)[]) if (next[key] == null) delete next[key];
+    await saveVault(next);
+    set({ ai: next.ai ?? null, calendars: next.calendars ?? [] });
   },
 
   async deleteAccount(password) {
-    await api.post('/me/delete', { password });
+    const me = get().me;
+    if (!me) return;
+    // As everywhere else, the server is shown a key derived from the password, never the password.
+    const { authKey } = await deriveSecrets(me.email, password);
+    await api.post('/me/delete', { password: authKey });
     get().setMe(null);
   },
 
@@ -215,7 +375,8 @@ export const useStore = create<State>((set, get) => ({
     if (!me && prev) {
       socket?.close();
       socket = null;
-      set({ chats: {}, chatsLoaded: false, msgs: {}, stories: [], typing: {}, connected: false, activeChatId: null });
+      void forgetKeys(prev.id);
+      set({ chats: {}, chatsLoaded: false, msgs: {}, stories: [], typing: {}, connected: false, activeChatId: null, e2e: 'locked', ai: null, calendars: [], mailUnread: 0, keyAlerts: {} });
     }
   },
 
@@ -273,18 +434,42 @@ export const useStore = create<State>((set, get) => ({
   // ───────────── chats ─────────────
 
   async loadChats() {
-    const { chats } = await api.get<{ chats: Chat[] }>('/chats');
+    const myId = get().me?.id ?? 0;
+    const list = (await api.get<{ chats: Chat[] }>('/chats')).chats;
+    // Learn each contact's key before opening anything they wrote.
+    const alerts: Record<number, true> = {};
+    for (const c of list) if (c.peer && noteContactKey(myId, c.peer.id, c.peer.publicKey)) alerts[c.peer.id] = true;
+    const chats = await Promise.all(list.map((c) => openPreview(c, myId)));
     set((s) => {
       // Keep non-member previews that are currently open.
       const next: Record<number, Chat> = {};
       for (const c of Object.values(s.chats)) if (!c.isMember && c.id === s.activeChatId) next[c.id] = c;
       for (const c of chats) next[c.id] = c;
-      return { chats: next, chatsLoaded: true };
+      return { chats: next, chatsLoaded: true, keyAlerts: { ...s.keyAlerts, ...alerts } };
+    });
+  },
+
+  acknowledgeKey(peerId) {
+    const myId = get().me?.id;
+    if (myId == null) return;
+    acknowledgeContactKey(myId, peerId);
+    set((s) => {
+      const { [peerId]: _seen, ...rest } = s.keyAlerts;
+      return { keyAlerts: rest };
     });
   },
 
   upsertChat(chat) {
-    set((s) => ({ chats: { ...s.chats, [chat.id]: chat } }));
+    const myId = get().me?.id;
+    const alert = myId != null && chat.peer ? noteContactKey(myId, chat.peer.id, chat.peer.publicKey) : false;
+    set((s) => ({ chats: { ...s.chats, [chat.id]: chat }, ...(alert && chat.peer ? { keyAlerts: { ...s.keyAlerts, [chat.peer.id]: true as const } } : {}) }));
+    // Its preview may still be ciphertext: decrypt it in the background.
+    if (chat.lastMessage?.enc) {
+      void openPreview(chat, get().me?.id ?? 0).then((opened) => {
+        const current = get().chats[chat.id];
+        if (opened !== chat && current?.lastMessage?.id === chat.lastMessage?.id) get().patchChat(chat.id, { lastMessage: opened.lastMessage });
+      });
+    }
   },
 
   patchChat(id, patch) {
@@ -355,7 +540,8 @@ export const useStore = create<State>((set, get) => ({
       if (mode === 'older' && real.length) query = `?before=${real[0]!.id}`;
       else if (mode === 'newer' && real.length) query = `?after=${real[real.length - 1]!.id}`;
       else if (typeof mode === 'object') query = `?around=${mode.around}`;
-      const r = await api.get<{ messages: Message[]; hasOlder: boolean; hasNewer: boolean }>(`/chats/${chatId}/messages${query}`);
+      const fetched = await api.get<{ messages: Message[]; hasOlder: boolean; hasNewer: boolean }>(`/chats/${chatId}/messages${query}`);
+      const r = { ...fetched, messages: await get().openMessages(fetched.messages) };
       set((s) => {
         const prev = s.msgs[chatId] ?? emptyMsgs();
         let items: ClientMessage[];
@@ -383,9 +569,51 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  async openMessages(messages) {
+    const myId = get().me?.id ?? 0;
+    // A private message is checked against the contact of its conversation: make sure
+    // that conversation (and so the contact's key) is known before opening anything.
+    const unknown = [...new Set(messages.filter((m) => m.enc && !get().chats[m.chatId]).map((m) => m.chatId))];
+    await Promise.all(unknown.map((id) => get().fetchChat(id)));
+    return Promise.all(messages.map((m) => openMessage(m, myId)));
+  },
+
+  async editMessage(m, text) {
+    if (!m.enc) {
+      await api.patch(`/messages/${m.id}`, { text });
+      return;
+    }
+    const me = get().me;
+    const peerKey = get().chats[m.chatId]?.peer?.publicKey;
+    if (!me || !peerKey || !hasKeys()) throw new ApiError(400, 'locked');
+    await api.patch(`/messages/${m.id}`, { enc: await sealMessage(m.chatId, me.id, peerKey, { type: m.type, text, attachment: m.attachment }) });
+  },
+
+  async forwardMessage(m, chatIds) {
+    const targets = chatIds.map((id) => get().chats[id]).filter((c): c is Chat => !!c);
+    // The server can copy a public message into public groups. Anything touching an
+    // encrypted conversation is done here, on the device, which holds the keys.
+    const byServer = m.enc ? [] : targets.filter((c) => c.type === 'group');
+    if (byServer.length) await api.post(`/messages/${m.id}/forward`, { chatIds: byServer.map((c) => c.id) });
+    for (const chat of targets.filter((c) => !byServer.includes(c))) {
+      let attachment = m.attachment;
+      if (attachment) {
+        const { url: _url, size: _size, key, ...meta } = attachment;
+        if (chat.type === 'dm' && !key) attachment = await uploadEncrypted(await attachmentBlob(attachment), meta);
+        else if (chat.type === 'group' && key) attachment = { ...meta, ...(await api.upload(await attachmentBlob(attachment), attachment.name)) };
+      }
+      await get().send(chat.id, { text: m.text, attachment, forwarded: true });
+    }
+  },
+
   async send(chatId, input) {
     const me = get().me;
     if (!me) return;
+    const chat = get().chats[chatId];
+    const secret = chat?.type === 'dm';
+    const peerKey = chat?.peer?.publicKey;
+    if (secret && !hasKeys()) return get().toast(translate(get().lang, 'err_locked'), 'error');
+    if (secret && !peerKey) return get().toast(translate(get().lang, 'err_peer_no_key'), 'error');
     // When the visible window is in the past, jump back to the present first.
     if (get().msgs[chatId]?.hasNewer) await get().loadMessages(chatId, 'latest');
     const id = tempId--;
@@ -408,7 +636,7 @@ export const useStore = create<State>((set, get) => ({
             deleted: false,
           }
         : null,
-      forwarded: false,
+      forwarded: !!input.forwarded,
       editedAt: null,
       deleted: false,
       createdAt: Date.now(),
@@ -424,12 +652,30 @@ export const useStore = create<State>((set, get) => ({
       return { msgs: { ...s.msgs, [chatId]: { ...prev, items: [...prev.items, optimistic] } } };
     });
     try {
-      const { message } = await api.post<{ message: Message }>(`/chats/${chatId}/messages`, {
-        text,
-        attachment: input.poll ? undefined : (input.attachment ?? undefined),
-        replyToId: input.replyTo?.id,
-        poll: input.poll,
-      });
+      let body: Record<string, unknown>;
+      if (secret) {
+        // Private conversation: only ciphertext leaves the device. The server sees an
+        // opaque blob for a file, never its name, type or key.
+        const a = input.attachment;
+        body = {
+          enc: await sealMessage(chatId, me.id, peerKey!, { type: optimistic.type, text, attachment: a ?? null }),
+          attachment: a ? { url: a.url, name: 'file.bin', size: a.size, mime: 'application/octet-stream', kind: 'file' } : undefined,
+          replyToId: input.replyTo?.id,
+          forwarded: input.forwarded,
+        };
+      } else {
+        body = {
+          text,
+          attachment: input.poll ? undefined : (input.attachment ?? undefined),
+          replyToId: input.replyTo?.id,
+          poll: input.poll,
+          forwarded: input.forwarded,
+        };
+      }
+      const sent = (await api.post<{ message: Message }>(`/chats/${chatId}/messages`, body)).message;
+      const message: ClientMessage = secret
+        ? { ...sent, type: optimistic.type, text, attachment: input.attachment ?? null, replyTo: optimistic.replyTo, e2e: 'ok' }
+        : sent;
       set((s) => {
         const prev = s.msgs[chatId] ?? emptyMsgs();
         const exists = prev.items.some((m) => m.id === message.id);
@@ -542,12 +788,39 @@ function connect() {
       }
     }
   });
-  socket.on('disconnect', () => store.setState({ connected: false }));
+  socket.on('disconnect', (reason) => {
+    store.setState({ connected: false });
+    // The server closes every connection of an account when one of its devices is signed
+    // out; the devices that are still signed in simply come back.
+    if (reason === 'io server disconnect') setTimeout(() => store.getState().me && socket?.connect(), 800);
+  });
+  socket.on('connect_error', () => {
+    // If the session itself is gone, this request notices and signs the device out.
+    if (store.getState().me) void api.get('/chats').catch((e) => store.getState().error(e));
+  });
 
-  socket.on('message:new', (raw: Message) => {
+  // Decryption is asynchronous: handle incoming events one at a time so they stay in order.
+  let queue: Promise<unknown> = Promise.resolve();
+  const inOrder = <T,>(handler: (payload: T) => Promise<void> | void) => (payload: T) => {
+    queue = queue.then(() => handler(payload)).catch(() => undefined);
+  };
+
+  socket.on('mail:new', () => {
+    store.setState((s) => ({ mailUnread: s.mailUnread + 1 }));
+    store.getState().toast(translate(store.getState().lang, 'mail_new'));
+  });
+
+  socket.on('message:new', inOrder(async (received: Message) => {
+    const myId = store.getState().me?.id ?? 0;
+    let raw = await openMessage(received, myId);
+    if (raw.e2e === 'failed' && store.getState().chats[received.chatId]) {
+      // Perhaps written with a key the contact has just changed to: ask for their current one.
+      await store.getState().fetchChat(received.chatId);
+      raw = await openMessage(received, myId);
+    }
     const s = store.getState();
     // Broadcasts are viewer-neutral; the author of an event is "going" by default.
-    const m: Message = raw.event && raw.event.createdBy === s.me?.id ? { ...raw, event: { ...raw.event, myStatus: 'going' } } : raw;
+    const m: ClientMessage = raw.event && raw.event.createdBy === s.me?.id ? { ...raw, event: { ...raw.event, myStatus: 'going' } } : raw;
     const state = s.msgs[m.chatId];
     if (state?.loaded && !state.hasNewer && !state.items.some((x) => x.id === m.id)) {
       // Our own message normally arrives through the POST response; give it a moment.
@@ -570,18 +843,25 @@ function connect() {
     }
     onIncoming(m);
     s.typing[m.chatId]?.[m.userId] && clearTyping(m.chatId, m.userId);
-  });
+  }));
 
-  socket.on('message:patch', (e: MessagePatchEvent) => {
+  socket.on('message:patch', inOrder(async (event: MessagePatchEvent) => {
     const s = store.getState();
-    s.patchMessage(e.chatId, e.id, (m) => ({ ...m, ...e.patch, ...(e.patch.deleted ? { reactions: [], replyTo: null } : {}) }));
+    let e = event;
+    if (event.patch.enc) {
+      // An edited private message arrives as new ciphertext.
+      const author = s.msgs[event.chatId]?.items.find((m) => m.id === event.id)?.userId ?? s.chats[event.chatId]?.lastMessage?.userId;
+      const opened = author == null ? 'failed' : await openEnvelope(event.chatId, { userId: author, enc: event.patch.enc }, s.me?.id ?? 0, peerOf(event.chatId));
+      if (typeof opened !== 'string') e = { ...event, patch: { ...event.patch, text: opened.text, attachment: opened.attachment ?? null } };
+    }
+    s.patchMessage(e.chatId, e.id, (m) => ({ ...m, ...e.patch, ...(e.patch.deleted ? { reactions: [], replyTo: null, enc: null } : {}) }));
     const chat = s.chats[e.chatId];
     if (chat?.lastMessage?.id === e.id) {
       s.patchChat(e.chatId, {
         lastMessage: { ...chat.lastMessage, text: e.patch.text ?? chat.lastMessage.text, deleted: e.patch.deleted ?? chat.lastMessage.deleted },
       });
     }
-  });
+  }));
 
   socket.on('message:reaction', (e: ReactionEvent) => {
     const myId = store.getState().me?.id;

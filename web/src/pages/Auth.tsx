@@ -6,6 +6,7 @@ import { Logo } from '../components/icons.tsx';
 import { profileKey } from '../components/dialogs.tsx';
 import { Field, Spinner, WorldBadge } from '../components/ui.tsx';
 import { ApiError, api } from '../lib/api.ts';
+import { deriveSecrets, prepareSignup } from '../lib/e2ee.ts';
 import { useT, type Key } from '../lib/i18n.ts';
 import { PUBLIC_ORIGIN } from '../lib/platform.ts';
 import { useStore } from '../lib/store.ts';
@@ -57,7 +58,9 @@ export function AuthPage() {
     setBusy(true);
     setErr(null);
     try {
-      await signIn(await api.post<{ me: Me; token?: string }>('/auth/login', { email, password }));
+      // The password stays here: the server receives a key derived from it.
+      const secrets = await deriveSecrets(email, password);
+      await signIn(await api.post<{ me: Me; token?: string }>('/auth/login', { email, password: secrets.authKey }), { secrets });
       navigate(next, { replace: true });
     } catch (e) {
       fail(e);
@@ -70,16 +73,21 @@ export function AuthPage() {
     setBusy(true);
     setErr(null);
     try {
+      // Keys for private messages are created on this device, before the account exists.
+      const keys = await prepareSignup(email, password);
       await signIn(
         await api.post<{ me: Me; token?: string }>('/auth/register', {
           email,
-          password,
+          password: keys.secrets.authKey,
           name,
           world: lang,
           profile,
           city: city || null,
           aliyahYear: year ? Number(year) : null,
+          publicKey: keys.publicKey,
+          encryptedPrivateKey: keys.encryptedPrivateKey,
         }),
+        { secrets: keys.secrets, created: keys },
       );
       navigate(next, { replace: true });
     } catch (e) {

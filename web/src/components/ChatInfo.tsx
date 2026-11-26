@@ -11,6 +11,7 @@ import { useStore } from '../lib/store.ts';
 import { Confirm, GroupDialog, ReportDialog, categoryKey, profileKey } from './dialogs.tsx';
 import { Icon } from './icons.tsx';
 import { previewLine } from './Message.tsx';
+import { SafetyCode } from './Security.tsx';
 import { Avatar, ChatAvatar, IconButton, Menu, Spinner, useDismiss, type MenuItem } from './ui.tsx';
 
 export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () => void; onJump: (messageId: number) => void }) {
@@ -61,7 +62,8 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
       .catch(() => undefined);
     api
       .get<{ messages: Message[] }>(`/chats/${chat.id}/pins`)
-      .then((r) => setPins(r.messages))
+      .then((r) => useStore.getState().openMessages(r.messages))
+      .then(setPins)
       .catch(() => undefined);
   }, [chat.id]);
 
@@ -218,6 +220,8 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
             <p className="muted small">{t('invite_link_hint')}</p>
           </section>
         )}
+
+        {!group && peer && <SafetyCode peerKey={peer.publicKey} peerName={peer.name} />}
 
         {chat.isMember && (
           <section className="info-section">

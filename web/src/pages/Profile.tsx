@@ -2,11 +2,16 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CITIES, PROFILE_EMOJI, cityName } from '../../../shared/data.ts';
 import { PROFILES, type Me, type Message, type ProfileType, type Report, type UserPublic } from '../../../shared/types.ts';
-import { profileKey } from '../components/dialogs.tsx';
+import { AiSettingsDialog, useAi } from '../components/Ai.tsx';
+import { CalendarSettingsDialog } from '../components/Calendar.tsx';
+import { UnlockDialog, profileKey } from '../components/dialogs.tsx';
 import { Icon, type IconName } from '../components/icons.tsx';
 import { previewLine } from '../components/Message.tsx';
+import { DevicesDialog, ResetEncryptionDialog } from '../components/Security.tsx';
 import { Avatar, Empty, Field, Modal, Spinner } from '../components/ui.tsx';
-import { api } from '../lib/api.ts';
+import { PROVIDERS } from '../lib/ai/index.ts';
+import { ApiError, api } from '../lib/api.ts';
+import { hasKeys, rewrapForNewPassword } from '../lib/e2ee.ts';
 import { formatDay } from '../lib/format.tsx';
 import { useT, type Key } from '../lib/i18n.ts';
 import { uploadFile } from '../lib/media.ts';
@@ -108,6 +113,7 @@ function EditProfile({ onClose }: { onClose: () => void }) {
 
 function PasswordDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
+  const me = useStore((s) => s.me)!;
   const { error, toast } = useStore.getState();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -124,8 +130,15 @@ function PasswordDialog({ onClose }: { onClose: () => void }) {
           onClick={async () => {
             setBusy(true);
             try {
-              await api.patch('/me', { password: next, currentPassword: current });
-              toast(t('saved'));
+              // The encryption key and the connections are locked by the password: they are
+              // opened with the current one and locked again with the new one, on this device.
+              const change = await rewrapForNewPassword(me.id, me.email, current, next).catch((e) => {
+                throw e instanceof ApiError ? e : new ApiError(403, 'wrong_password');
+              });
+              await api.patch('/me', change.body);
+              await change.done();
+              useStore.setState({ e2e: hasKeys() ? 'ready' : 'locked' });
+              toast(t('password_changed'));
               onClose();
             } catch (e) {
               error(e);
@@ -144,6 +157,7 @@ function PasswordDialog({ onClose }: { onClose: () => void }) {
       <Field label={t('new_password')} hint={t('password_hint')}>
         <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
       </Field>
+      <p className="muted small">{t('password_change_note')}</p>
     </Modal>
   );
 }
@@ -194,13 +208,15 @@ function StarredDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const navigate = useNavigate();
   const lang = useStore((s) => s.lang);
+  const e2e = useStore((s) => s.e2e);
   const [data, setData] = useState<{ messages: Message[]; chats: { id: number; name: string; emoji: string; type: string }[] } | null>(null);
   useEffect(() => {
     api
       .get<{ messages: Message[]; chats: { id: number; name: string; emoji: string; type: string }[] }>('/starred')
-      .then(setData)
+      // Private messages arrive encrypted: open them here before showing them.
+      .then(async (r) => setData({ ...r, messages: await useStore.getState().openMessages(r.messages) }))
       .catch(() => setData({ messages: [], chats: [] }));
-  }, []);
+  }, [e2e]);
   return (
     <Modal title={t('starred_messages')} onClose={onClose}>
       {!data && (
@@ -228,7 +244,7 @@ function StarredDialog({ onClose }: { onClose: () => void }) {
                 {formatDay(m.createdAt, lang, t)}
               </span>
               <span className="search-snippet" dir="auto">
-                {previewLine({ type: m.type, text: m.poll?.question ?? (m.text || m.attachment?.name || ''), deleted: false }, t)}
+                {previewLine({ type: m.type, text: m.poll?.question ?? (m.text || m.attachment?.name || ''), deleted: false, encrypted: !!m.enc && !m.text && !m.attachment }, t)}
               </span>
             </button>
           );
@@ -374,8 +390,16 @@ export function ProfilePage() {
   const me = useStore((s) => s.me)!;
   const lang = useStore((s) => s.lang);
   const theme = useStore((s) => s.theme);
+  const e2e = useStore((s) => s.e2e);
+  const calendars = useStore((s) => s.calendars);
+  const mailEnabled = useStore((s) => s.config?.mail);
+  const mailUnread = useStore((s) => s.mailUnread);
+  const ai = useAi();
+  const navigate = useNavigate();
   const { setMe, setTheme, switchWorld, logout, error, toast, openShare } = useStore.getState();
-  const [dialog, setDialog] = useState<'edit' | 'password' | 'starred' | 'blocked' | 'moderation' | 'delete' | null>(null);
+  const [dialog, setDialog] = useState<
+    'edit' | 'password' | 'starred' | 'blocked' | 'moderation' | 'delete' | 'unlock' | 'reset' | 'devices' | 'ai' | 'calendar' | null
+  >(null);
   const [uploading, setUploading] = useState(false);
   const [notif, setNotif] = useState(() => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission));
   const input = useRef<HTMLInputElement>(null);
@@ -391,6 +415,18 @@ export function ProfilePage() {
       error(e);
     } finally {
       setUploading(false);
+    }
+  };
+
+  // Privacy switches answer at once; the server confirms (or the switch goes back).
+  const setPrivacy = async (patch: { hidePresence?: boolean; noReceipts?: boolean }) => {
+    const before = me;
+    setMe({ ...me, ...patch });
+    try {
+      setMe((await api.patch<{ me: Me }>('/me', patch)).me);
+    } catch (e) {
+      setMe(before);
+      error(e);
     }
   };
 
@@ -458,6 +494,49 @@ export function ProfilePage() {
           </div>
 
           <div className="card list-card">
+            <div className="section-title pad">{t('connections')}</div>
+            <Row
+              icon="sparkles"
+              label={t('ai_mine')}
+              hint={ai ? t('ai_connected_to', { provider: ai.provider === 'custom' ? t('ai_provider_custom') : PROVIDERS[ai.provider].label }) : t('ai_mine_hint')}
+              onClick={() => (ai ? navigate('/assistant') : setDialog('ai'))}
+            />
+            <Row icon="calendar" label={t('cal_mine')} hint={calendars.length ? t('cal_connected_n', { n: calendars.length }) : t('cal_mine_hint')} onClick={() => setDialog('calendar')} />
+            {mailEnabled !== false && (
+              <Row icon="at" label={t('mail_mine')} hint={mailUnread ? t('mail_unread_n', { n: mailUnread }) : t('mail_mine_hint')} onClick={() => navigate('/mail')} />
+            )}
+          </div>
+
+          <div className="card list-card">
+            <div className="section-title pad">{t('security')}</div>
+            <Row
+              icon="shield"
+              label={t('e2e_title')}
+              hint={e2e === 'ready' ? t('e2e_status_ready') : t('e2e_status_locked')}
+              danger={e2e !== 'ready'}
+              onClick={() => (e2e === 'ready' ? toast(t('e2e_status_ready_long')) : setDialog('unlock'))}
+            />
+            {e2e !== 'ready' && <Row icon="refresh" label={t('e2e_reset')} hint={t('e2e_reset_hint')} onClick={() => setDialog('reset')} />}
+            <Row icon="phone" label={t('devices')} hint={t('devices_hint')} onClick={() => setDialog('devices')} />
+            <Row icon="shield" label={t('change_password')} onClick={() => setDialog('password')} />
+            <label className="switch-row pad">
+              <span>
+                <Icon name="eye" size={18} /> {t('privacy_presence')}
+                <small>{t('privacy_presence_hint')}</small>
+              </span>
+              <input type="checkbox" className="switch" checked={me.hidePresence} onChange={(e) => void setPrivacy({ hidePresence: e.target.checked })} />
+            </label>
+            <label className="switch-row pad">
+              <span>
+                <Icon name="checks" size={18} /> {t('privacy_receipts')}
+                <small>{t('privacy_receipts_hint')}</small>
+              </span>
+              <input type="checkbox" className="switch" checked={me.noReceipts} onChange={(e) => void setPrivacy({ noReceipts: e.target.checked })} />
+            </label>
+            <Row icon="block" label={t('blocked_users')} hint={me.blocked.length ? String(me.blocked.length) : undefined} onClick={() => setDialog('blocked')} />
+          </div>
+
+          <div className="card list-card">
             <Row icon="star" label={t('starred_messages')} onClick={() => setDialog('starred')} />
             {notif !== 'unsupported' && notif !== 'granted' && <Row icon="bell" label={t('enable_notifications')} hint={t('enable_notifications_hint')} onClick={() => void enableNotifications()} />}
             <Row
@@ -466,8 +545,6 @@ export function ProfilePage() {
               hint={t('invite_friends_hint')}
               onClick={() => openShare({ title: 'OlimTalk', text: t('share_app_text'), url: PUBLIC_ORIGIN, emoji: '💙', cta: t('share_cta_app') })}
             />
-            <Row icon="block" label={t('blocked_users')} hint={me.blocked.length ? String(me.blocked.length) : undefined} onClick={() => setDialog('blocked')} />
-            <Row icon="shield" label={t('change_password')} onClick={() => setDialog('password')} />
             {me.isAdmin && <Row icon="flag" label={t('moderation')} hint={t('moderation_hint')} onClick={() => setDialog('moderation')} />}
             <Row icon="info" label={t('legal_terms')} onClick={() => void openExternal(`${PUBLIC_ORIGIN}/terms`)} />
             <Row icon="shield" label={t('legal_privacy')} onClick={() => void openExternal(`${PUBLIC_ORIGIN}/privacy`)} />
@@ -486,6 +563,11 @@ export function ProfilePage() {
       {dialog === 'blocked' && <BlockedDialog onClose={() => setDialog(null)} />}
       {dialog === 'moderation' && <ModerationDialog onClose={() => setDialog(null)} />}
       {dialog === 'delete' && <DeleteAccountDialog onClose={() => setDialog(null)} />}
+      {dialog === 'unlock' && <UnlockDialog onClose={() => setDialog(null)} />}
+      {dialog === 'reset' && <ResetEncryptionDialog onClose={() => setDialog(null)} />}
+      {dialog === 'devices' && <DevicesDialog onClose={() => setDialog(null)} />}
+      {dialog === 'ai' && <AiSettingsDialog onClose={() => setDialog(null)} />}
+      {dialog === 'calendar' && <CalendarSettingsDialog onClose={() => setDialog(null)} />}
     </div>
   );
 }

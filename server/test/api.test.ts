@@ -729,7 +729,7 @@ test('end-to-end encryption: the server stores and relays private messages it ca
     const { message } = await judy.c.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { enc }, 201);
     const live = await incoming;
     assert.equal(live.text, '');
-    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, live.enc!), { text: secretText });
+    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, live.enc!, [judy.identity.publicKey]), { text: secretText });
 
     // Nothing readable in the database, the history, the conversation list or the search.
     const { db } = await import('../db.ts');
@@ -739,7 +739,7 @@ test('end-to-end encryption: the server stores and relays private messages it ca
     const preview = list.chats.find((c) => c.id === dm.chat.id)!.lastMessage!;
     assert.equal(preview.text, '');
     assert.equal(preview.encrypted, true);
-    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, preview.enc!), { text: secretText });
+    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, preview.enc!, [judy.identity.publicKey]), { text: secretText });
     assert.deepEqual((await ivan.c.get<{ messages: Message[] }>(`/api/chats/${dm.chat.id}/search?q=teoudat`)).messages, []);
 
     // Editing replaces the ciphertext.
@@ -747,7 +747,7 @@ test('end-to-end encryption: the server stores and relays private messages it ca
     const patched = once<{ patch: { enc: string } }>(ivanSocket, 'message:patch');
     await judy.c.patch(`/api/messages/${message.id}`, { text: 'en clair' }, 400);
     await judy.c.patch(`/api/messages/${message.id}`, { enc: edited });
-    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, (await patched).patch.enc), { text: 'corrigé' });
+    assert.deepEqual(await decryptMessage(ivan.identity.privateKey, ivan.identity.publicKey, false, ctx, (await patched).patch.enc, [judy.identity.publicKey]), { text: 'corrigé' });
 
     // The server cannot forward what it cannot read.
     await ivan.c.post(`/api/messages/${message.id}/forward`, { chatIds: [group.id] }, 400);

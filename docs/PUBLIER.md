@@ -9,6 +9,7 @@ Ce guide décrit le chemin entre le code de ce dépôt et les deux boutiques d'a
 | Projet Android (`android/`) | compile ; un fichier d'installation de test est produit à chaque modification |
 | Projet iOS (`ios/`) | compile (vérifié sur simulateur, sans signature) |
 | Exigences des boutiques déjà dans l'application | suppression du compte, signalement, blocage, règles de la communauté, politique de confidentialité |
+| Protection des données | messages privés chiffrés de bout en bout, appareils connectés, réglages de confidentialité |
 | Reste à votre charge | héberger le serveur, ouvrir les comptes développeur, signer et envoyer les applications |
 
 Les applications ne contiennent que l'interface. Elles parlent à **votre serveur OlimTalk**, qui doit donc être en
@@ -25,6 +26,10 @@ ADMIN_EMAILS=vous@example.com
 LEGAL_OPERATOR=Nom de votre association ou société
 LEGAL_CONTACT=contact@votre-domaine
 ```
+
+Pour activer « Ma boîte mail » (facultatif), ajoutez `MAIL_DOMAIN` et l'un des deux modes de réception décrits dans
+[`.env.example`](../.env.example) : un port SMTP avec un enregistrement MX vers le serveur, ou un service de réception
+d'e-mails qui poste les messages sur `/api/inbound/email`. Sans `MAIL_DOMAIN`, la fonction est simplement masquée.
 
 Vérifiez ensuite que `https://votre-domaine/privacy` et `https://votre-domaine/terms` s'affichent sans le bandeau
 « document incomplet ». **Faites relire ces deux textes** : ils décrivent fidèlement le fonctionnement de
@@ -66,8 +71,10 @@ prendre votre nom de domaine à l'envers (`il.co.olimtalk`, par exemple). Pour l
 5. Dans la Play Console :
    - fiche de l'application (textes et captures, idéalement dans les quatre langues) ;
    - questionnaire de classification du contenu : l'application contient du contenu publié par les utilisateurs ;
-   - formulaire « Sécurité des données » : nom, e-mail, messages, photos / vidéos, enregistrements audio ; aucune
-     donnée vendue ni partagée à des fins publicitaires ; suppression possible ;
+   - formulaire « Sécurité des données » : nom, e-mail, messages, photos / vidéos, enregistrements audio, e-mails
+     transférés par l'utilisateur ; données chiffrées en transit ; aucune donnée vendue ni partagée à des fins
+     publicitaires ; suppression possible. Les textes envoyés à l'IA de l'utilisateur partent de son appareil vers
+     le fournisseur qu'il a choisi, avec sa propre clé : décrivez-le tel quel ;
    - adresse de la politique de confidentialité : `https://votre-domaine/privacy` ;
    - suppression du compte : dans l'application (*Profil → Supprimer mon compte*) et sur le site, même chemin.
 6. Les comptes développeur personnels récents doivent d'abord mener un test fermé avec un nombre minimal de testeurs
@@ -83,6 +90,11 @@ prendre votre nom de domaine à l'envers (`il.co.olimtalk`, par exemple). Pour l
 3. À chaque nouvel envoi, augmentez le numéro de version et de build dans Xcode (*General → Identity*).
 4. Dans App Store Connect : fiche, captures d'écran, réponses « Confidentialité de l'app », adresse de la politique de
    confidentialité, classification par âge.
+   - **Chiffrement (conformité à l'exportation)** : Apple demande à chaque envoi si l'application utilise du
+     chiffrement. Répondez oui : en plus du HTTPS, OlimTalk chiffre les messages privés avec des algorithmes standards
+     fournis par le système (Web Crypto : AES-256-GCM, ECDH P-256, PBKDF2). Suivez ensuite le questionnaire d'Apple ;
+     selon vos réponses et les pays de diffusion (la France notamment), une déclaration peut être demandée. C'est une
+     déclaration faite en votre nom : en cas de doute, faites-la valider.
 5. Notes pour l'équipe de validation d'Apple, à remplir avec soin :
    - un **compte de démonstration** (e-mail et mot de passe) ;
    - contenu publié par les utilisateurs : chaque message, groupe, story et profil peut être signalé, toute personne
@@ -102,7 +114,13 @@ prendre votre nom de domaine à l'envers (`il.co.olimtalk`, par exemple). Pour l
   l'application » (lien `olimtalk://join/…`) et les boutons des boutiques une fois `APP_STORE_URL` et `PLAY_STORE_URL`
   renseignés sur le serveur. L'ouverture directe de l'application depuis un lien `https://` demande de déclarer votre
   domaine dans les deux projets natifs.
-- **Connexion par numéro de téléphone** et réinitialisation du mot de passe par e-mail (prestataire d'envoi requis).
+- **Connexion par numéro de téléphone** (prestataire d'envoi requis). Pour le mot de passe oublié, voir le README :
+  le mot de passe verrouille les messages privés, une clé de secours serait la bonne réponse.
+- **« Se connecter avec Google / Microsoft »** pour lire directement la boîte mail et l'agenda : cela demande
+  d'enregistrer l'application auprès de Google et de Microsoft (et de passer leur validation de sécurité pour l'accès
+  aux e-mails). En attendant, l'agenda passe par le lien `.ics` et la boîte mail par l'adresse de transfert, qui
+  fonctionnent avec tous les fournisseurs.
+- **Audit de sécurité** du chiffrement par un tiers avant une large ouverture.
 
 ## 8. Mettre l'application à jour
 

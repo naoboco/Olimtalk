@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Attachment } from '../../../shared/types.ts';
 import { api } from './api.ts';
+import { uploadEncrypted } from './e2ee.ts';
 
 const MAX_SIDE = 1920;
 
@@ -52,28 +53,42 @@ function videoMeta(file: Blob): Promise<{ width?: number; height?: number; durat
   });
 }
 
-/** Upload a file picked by the user and return the attachment to send. */
-export async function uploadFile(file: File): Promise<Attachment> {
+const KINDS: [string, Attachment['kind']][] = [
+  ['image/', 'image'],
+  ['video/', 'video'],
+  ['audio/', 'audio'],
+];
+const kindOf = (mime: string): Attachment['kind'] => KINDS.find(([prefix]) => mime.startsWith(prefix))?.[1] ?? 'file';
+
+/**
+ * Upload a file picked by the user and return the attachment to send.
+ * With `secret`, the file is encrypted on the device first (private conversations).
+ */
+export async function uploadFile(file: File, secret = false): Promise<Attachment> {
+  let blob: Blob = file;
+  let name = file.name;
+  let dims: { width?: number; height?: number; duration?: number } = {};
   if (file.type.startsWith('image/')) {
     const img = await prepareImage(file).catch(() => null);
     if (img) {
-      const a = await api.upload(img.blob, img.name);
-      return { ...a, width: img.width, height: img.height };
+      blob = img.blob;
+      name = img.name;
+      dims = { width: img.width, height: img.height };
     }
+  } else if (file.type.startsWith('video/')) {
+    dims = await videoMeta(file);
   }
-  const a = await api.upload(file, file.name);
-  if (a.kind === 'video') {
-    const meta = await videoMeta(file);
-    return { ...a, ...meta };
-  }
-  return a;
+  if (secret) return uploadEncrypted(blob, { name, mime: blob.type || file.type || 'application/octet-stream', kind: kindOf(blob.type || file.type), ...dims });
+  return { ...(await api.upload(blob, name)), ...dims };
 }
 
-export async function uploadVoice(blob: Blob, duration: number): Promise<Attachment> {
+export async function uploadVoice(blob: Blob, duration: number, secret = false): Promise<Attachment> {
   const type = blob.type.split(';')[0] || 'audio/webm';
   const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'm4a' : 'weba';
-  // Re-wrap so that the multipart part carries a bare MIME type the server recognises.
-  const a = await api.upload(new Blob([blob], { type }), `voice.${ext}`);
+  // Re-wrap so that the upload carries a bare MIME type the server recognises.
+  const clean = new Blob([blob], { type });
+  if (secret) return uploadEncrypted(clean, { name: `voice.${ext}`, mime: type, kind: 'audio', voice: true, duration });
+  const a = await api.upload(clean, `voice.${ext}`);
   return { ...a, kind: 'audio', voice: true, duration };
 }
 

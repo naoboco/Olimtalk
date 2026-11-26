@@ -1,13 +1,15 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Attachment, Chat, EventData, Lang, Message, MessagePreview, PollData, SystemInfo } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { colorFor, formatBytes, formatDateTime, formatDuration, formatMonth, formatTime, isEmojiOnly, plainText, richText } from '../lib/format.tsx';
 import { useT, type T } from '../lib/i18n.ts';
-import { asset } from '../lib/platform.ts';
-import { inviteUrl } from '../lib/share.ts';
+import { addToCalendarItems } from '../lib/add-to-calendar.ts';
+import { attachmentBlob, attachmentUrl } from '../lib/e2ee.ts';
+import { IS_NATIVE } from '../lib/platform.ts';
+import { downloadFile, inviteUrl, nativeShare } from '../lib/share.ts';
 import { useStore, type ClientMessage } from '../lib/store.ts';
 import { Icon } from './icons.tsx';
-import { Avatar } from './ui.tsx';
+import { Avatar, Menu, useMenu } from './ui.tsx';
 
 export function systemText(info: SystemInfo | undefined, t: T): string {
   if (!info) return '';
@@ -18,8 +20,10 @@ export function systemText(info: SystemInfo | undefined, t: T): string {
 }
 
 /** One-line description of a message for lists, replies and notifications. */
-export function previewLine(m: Pick<MessagePreview, 'type' | 'text' | 'deleted' | 'system'>, t: T): string {
+export function previewLine(m: Pick<MessagePreview, 'type' | 'text' | 'deleted' | 'system' | 'encrypted'>, t: T): string {
   if (m.deleted) return `🚫 ${t('message_deleted')}`;
+  // Still ciphertext: this device has not (or cannot) decrypt it.
+  if (m.encrypted && !m.text) return `🔒 ${t('encrypted_message')}`;
   const text = plainText(m.text);
   switch (m.type) {
     case 'system':
@@ -94,15 +98,49 @@ export function AudioPlayer({ src, duration }: { src: string; duration?: number 
   );
 }
 
+/**
+ * The address to display an attachment. Files of private conversations are downloaded
+ * and decrypted on the device first; `null` while that is in progress.
+ */
+export function useAttachmentUrl(a: Attachment | null | undefined): { url: string | null; failed: boolean } {
+  const [state, setState] = useState<{ url: string | null; failed: boolean }>({ url: null, failed: false });
+  useEffect(() => {
+    if (!a) return setState({ url: null, failed: false });
+    let cancelled = false;
+    setState({ url: null, failed: false });
+    attachmentUrl(a).then(
+      (url) => !cancelled && setState({ url, failed: false }),
+      () => !cancelled && setState({ url: null, failed: true }),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [a?.url, a?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return state;
+}
+
+/** Save or open a file. Encrypted files are decrypted on the device, never by the server. */
+export async function saveAttachment(a: Attachment) {
+  const file = new File([await attachmentBlob(a)], a.name || 'file', { type: a.mime });
+  if (IS_NATIVE) await nativeShare({ title: a.name, text: a.name, url: '' }, file);
+  else downloadFile(file);
+}
+
+function Pending({ children, failed }: { children?: ReactNode; failed: boolean }) {
+  return <span className="media-pending">{failed ? '⚠️' : (children ?? <span className="spinner" style={{ width: 22, height: 22 }} />)}</span>;
+}
+
 function AttachmentView({ a }: { a: Attachment }) {
   const openLightbox = useStore((s) => s.openLightbox);
+  const error = useStore((s) => s.error);
+  const { url, failed } = useAttachmentUrl(a.kind === 'file' ? null : a);
   if (a.kind === 'image' || a.kind === 'video') {
     const ratio = a.width && a.height ? a.width / a.height : 4 / 3;
     const width = Math.min(320, Math.max(160, Math.round(260 * Math.min(ratio, 1.4))));
     return (
       <button type="button" className="media" style={{ width, aspectRatio: String(Math.max(0.6, Math.min(ratio, 2))) }} onClick={() => openLightbox(a)}>
-        {a.kind === 'image' ? <img src={asset(a.url)} alt={a.name} loading="lazy" /> : <video src={asset(a.url)} preload="metadata" muted playsInline />}
-        {a.kind === 'video' && (
+        {!url ? <Pending failed={failed} /> : a.kind === 'image' ? <img src={url} alt={a.name} loading="lazy" /> : <video src={url} preload="metadata" muted playsInline />}
+        {a.kind === 'video' && url && (
           <span className="media-play">
             <Icon name="play" size={26} fill />
           </span>
@@ -110,9 +148,9 @@ function AttachmentView({ a }: { a: Attachment }) {
       </button>
     );
   }
-  if (a.kind === 'audio') return <AudioPlayer src={asset(a.url)} duration={a.duration} />;
+  if (a.kind === 'audio') return url ? <AudioPlayer src={url} duration={a.duration} /> : <Pending failed={failed} />;
   return (
-    <a className="file" href={asset(a.url)} download={a.name} target="_blank" rel="noopener noreferrer">
+    <button type="button" className="file" onClick={() => void saveAttachment(a).catch(error)}>
       <span className="file-icon">
         <Icon name="file" size={22} />
       </span>
@@ -121,7 +159,7 @@ function AttachmentView({ a }: { a: Attachment }) {
         <span className="file-size">{formatBytes(a.size)}</span>
       </span>
       <Icon name="download" size={18} />
-    </a>
+    </button>
   );
 }
 
@@ -180,6 +218,7 @@ export function EventCard({ ev, onChange, compact }: { ev: EventData; onChange?:
   const error = useStore((s) => s.error);
   const openShare = useStore((s) => s.openShare);
   const [busy, setBusy] = useState(false);
+  const calendarMenu = useMenu();
   const date = formatMonth(ev.startsAt, lang);
   const rsvp = async (status: EventData['myStatus']) => {
     if (busy) return;
@@ -242,6 +281,10 @@ export function EventCard({ ev, onChange, compact }: { ev: EventData; onChange?:
         <button type="button" className={`btn small ${ev.myStatus === 'no' ? 'primary' : 'soft'}`} onClick={() => rsvp('no')} disabled={busy}>
           {t('event_no')}
         </button>
+        <button type="button" className="btn small ghost icon-only" aria-label={t('cal_add_event')} title={t('cal_add_event')} onClick={calendarMenu.openFrom}>
+          <Icon name="calendar" size={17} />
+        </button>
+        {calendarMenu.at && <Menu {...calendarMenu.at} items={addToCalendarItems(ev, t)} onClose={calendarMenu.close} />}
         <button
           type="button"
           className="btn small ghost icon-only"
@@ -352,6 +395,8 @@ export const MessageRow = memo(function MessageRow({ m, chat, mine, showAuthor, 
           )}
           {m.deleted ? (
             <span className="deleted-text">🚫 {t('message_deleted')}</span>
+          ) : m.e2e === 'locked' || m.e2e === 'failed' ? (
+            <span className="deleted-text">🔒 {m.e2e === 'locked' ? t('e2e_message_locked') : t('e2e_message_failed')}</span>
           ) : (
             <>
               {m.attachment && <AttachmentView a={m.attachment} />}

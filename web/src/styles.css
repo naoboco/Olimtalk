@@ -3339,3 +3339,360 @@ html.native textarea {
 html.native .page-inner {
   padding-bottom: calc(40px + var(--sab));
 }
+
+/* ───────────── privacy, encryption and personal connections ───────────── */
+button.banner,
+button.notice,
+.as-button {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.banner.as-button {
+  justify-content: flex-start;
+  align-items: center;
+}
+.notice.as-button {
+  align-items: center;
+}
+.notice.as-button > span {
+  flex: 1;
+}
+.banner.spaced,
+.section-title.spaced {
+  margin-top: 16px;
+}
+.section-title.pad {
+  padding: 10px 2px 2px;
+  margin: 0;
+}
+.section-title svg {
+  vertical-align: -2px;
+}
+.switch-row.pad {
+  padding: 11px 2px;
+}
+.switch-row > span {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.switch-row small {
+  flex-basis: 100%;
+  padding-inline-start: 28px;
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.role.inline {
+  display: inline-block;
+  margin-inline-start: 8px;
+  vertical-align: 1px;
+}
+.chat-intro .tag svg {
+  vertical-align: -2px;
+}
+.media-pending {
+  display: grid;
+  place-items: center;
+  min-width: 200px;
+  min-height: 140px;
+  border-radius: 13px;
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: 22px;
+}
+.safety-code {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  justify-content: center;
+  gap: 8px 18px;
+  margin: 12px 0;
+  padding: 16px 12px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+}
+.howto {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: 13.5px;
+}
+.howto summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.howto ul {
+  margin: 8px 0 2px;
+  padding-inline-start: 18px;
+  color: var(--text-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* my own AI */
+.icon-btn.pulse {
+  animation: pulse 1s infinite;
+}
+.ai-source {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-inline-start: 3px solid var(--border);
+  color: var(--text-2);
+  font-size: 13.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 120px;
+  overflow: auto;
+}
+.ai-answer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 48px;
+}
+.ai-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1em;
+  margin-inline-start: 2px;
+  vertical-align: -2px;
+  border-radius: 2px;
+  background: var(--primary);
+  animation: pulse 1s infinite;
+}
+.ai-via {
+  margin-top: 14px;
+}
+.assistant {
+  gap: 4px;
+  padding-bottom: 16px;
+}
+.assistant .row {
+  display: flex;
+}
+.assistant .row.mine {
+  justify-content: flex-end;
+}
+.assistant .bubble-wrap {
+  max-width: min(88%, 560px);
+}
+.bubble.no-meta {
+  padding-bottom: 8px;
+}
+.assistant .bubble .text {
+  line-height: 1.5;
+}
+.assistant-intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 8px 12px;
+  text-align: center;
+}
+.assistant-intro .hero-emoji {
+  font-size: 44px;
+}
+.assistant-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 440px;
+  margin-top: 10px;
+}
+.assistant-suggestions .chip {
+  justify-content: flex-start;
+  white-space: normal;
+  text-align: start;
+  height: auto;
+  padding: 10px 14px;
+  line-height: 1.35;
+}
+.assistant-composer {
+  flex: none;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: calc(8px + var(--sab));
+}
+
+/* my own calendar */
+.agenda-day .section-title {
+  margin: 6px 4px 8px;
+}
+.agenda-list {
+  padding: 4px 14px;
+}
+.agenda-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 11px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+.agenda-item:last-child {
+  border-bottom: 0;
+}
+button.agenda-item {
+  cursor: pointer;
+}
+.agenda-time {
+  flex: none;
+  width: 64px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+.agenda-item.olim .agenda-time {
+  color: var(--primary);
+}
+.agenda-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.agenda-main strong,
+.agenda-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agenda-main small {
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+/* my own mailbox */
+.mail-list {
+  padding: 4px 6px;
+}
+.mail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.mail-row:last-child {
+  border-bottom: 0;
+}
+.mail-row:hover {
+  background: var(--surface-2);
+  border-radius: 10px;
+}
+.mail-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 7px;
+  border-radius: 50%;
+}
+.mail-row.unread .mail-dot {
+  background: var(--primary);
+}
+.mail-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 1px;
+}
+.mail-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mail-top strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.mail-row.unread .mail-top strong,
+.mail-row.unread .mail-subject {
+  font-weight: 750;
+}
+.mail-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+}
+.mail-from {
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+.mail-body {
+  margin: 12px 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.5;
+}
+button.file {
+  width: 100%;
+  margin-top: 8px;
+  border: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+button.file:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.modal-body > .notice + .field,
+.modal-body > .notice + .section-title,
+.modal-body > .notice + .banner,
+.modal-body > .btn.block + .field,
+.modal-body > .banner + .field {
+  margin-top: 14px;
+}
+/* switches inside a settings list line up with the rows around them */
+.list-card .switch-row.pad {
+  padding: 11px 6px;
+}
+.list-card .section-title.pad {
+  padding: 10px 6px 2px;
+}
+.list-card .switch-row > span {
+  gap: 2px 14px;
+  font-weight: 600;
+}
+.list-card .switch-row > span > svg {
+  width: 20px;
+  height: 20px;
+  color: var(--text-2);
+}
+.list-card .switch-row small {
+  padding-inline-start: 34px;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-2);
+}

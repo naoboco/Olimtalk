@@ -164,6 +164,7 @@ function ChatList({ activeId }: { activeId: number | null }) {
         <h1>{t('tab_chats')}</h1>
         <WorldSwitcher />
         <span className="grow" />
+        <IconButton icon="sparkles" label={t('ai_assistant')} onClick={() => navigate('/assistant')} />
         <IconButton icon="plus" label={t('new_chat')} onClick={newMenu.openFrom} className="accent" />
       </header>
       <div className="pane-search">

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Chat, Message } from '../../../shared/types.ts';
+import { explainRequest, summarizeRequest, translateRequest, type AiRequest } from '../lib/ai/index.ts';
 import { api } from '../lib/api.ts';
 import { compactNumber, formatDay, lastSeen } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
 import { copyText, inviteUrl } from '../lib/share.ts';
 import { getSocket, useStore, type ClientMessage } from '../lib/store.ts';
+import { AiResultDialog, useAi } from './Ai.tsx';
 import { ChatInfo } from './ChatInfo.tsx';
 import { Composer } from './Composer.tsx';
-import { Confirm, EventDialog, ForwardDialog, PollDialog, ReportDialog } from './dialogs.tsx';
+import { Confirm, EventDialog, ForwardDialog, PollDialog, ReportDialog, UnlockDialog } from './dialogs.tsx';
 import { Icon } from './icons.tsx';
 import { MessageRow, previewLine } from './Message.tsx';
 import { ChatAvatar, Empty, IconButton, Menu, QUICK_REACTIONS, Spinner, useMenu, type MenuItem } from './ui.tsx';
@@ -24,6 +26,10 @@ export function ChatView({ chatId }: { chatId: number }) {
   const state = useStore((s) => s.msgs[chatId]);
   const typing = useStore((s) => s.typing[chatId]);
   const connected = useStore((s) => s.connected);
+  const e2e = useStore((s) => s.e2e);
+  const ai = useAi();
+  const [aiTask, setAiTask] = useState<{ title: string; request: AiRequest; source?: string } | null>(null);
+  const [unlocking, setUnlocking] = useState(false);
   const { loadMessages, markRead, setActiveChat, fetchChat, upsertChat, patchMessage, hideMessage, error, toast, openShare, send } = useStore.getState();
 
   const [missing, setMissing] = useState(false);
@@ -82,16 +88,21 @@ export function ChatView({ chatId }: { chatId: number }) {
     let cancelled = false;
     api
       .get<{ messages: Message[] }>(`/chats/${chatId}/pins`)
-      .then((r) => {
+      .then((r) => useStore.getState().openMessages(r.messages))
+      .then((opened) => {
         if (cancelled) return;
-        setPins(r.messages);
+        setPins(opened);
         setPinIndex(0);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [chatId, pinSignature, state?.loaded]);
+  }, [chatId, pinSignature, state?.loaded, e2e]);
+
+  // A contact whose key is no longer the one this device knew: their security code changed.
+  const peerId = chat?.peer?.id;
+  const keyChanged = useStore((s) => peerId != null && !!s.keyAlerts[peerId]);
 
   // ── scrolling ──
   const scrollToBottom = (smooth = false) => {
@@ -193,6 +204,12 @@ export function ChatView({ chatId }: { chatId: number }) {
   // ── search ──
   useEffect(() => {
     if (!searching || query.trim().length < 2) return setResults(null);
+    if (chat?.type === 'dm') {
+      // The server cannot search what it cannot read: look through the messages decrypted here.
+      const needle = query.trim().toLowerCase();
+      setResults([...items].reverse().filter((m) => !m.deleted && m.type !== 'system' && m.text.toLowerCase().includes(needle)).slice(0, 40));
+      return;
+    }
     let cancelled = false;
     const timer = setTimeout(() => {
       api
@@ -204,7 +221,7 @@ export function ChatView({ chatId }: { chatId: number }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [query, searching, chatId]);
+  }, [query, searching, chatId, chat?.type, items]);
 
   // ── message actions ──
   const react = useCallback(
@@ -305,6 +322,18 @@ export function ChatView({ chatId }: { chatId: number }) {
       },
       { icon: 'edit', label: t('edit'), onClick: () => (setReplyTo(null), setEditing(m)), hidden: !mine || !plain || !canSend },
       {
+        icon: 'globe',
+        label: t('ai_translate'),
+        hidden: !ai || !m.text,
+        onClick: () => setAiTask({ title: t('ai_translate'), request: translateRequest(m.text, lang), source: m.text }),
+      },
+      {
+        icon: 'sparkles',
+        label: t('ai_explain'),
+        hidden: !ai || !m.text,
+        onClick: () => setAiTask({ title: t('ai_explain'), request: explainRequest(m.text, lang), source: m.text }),
+      },
+      {
         icon: 'share',
         label: t('share_outside'),
         hidden: chat.type !== 'group' || !chat.inviteCode || !m.text,
@@ -365,6 +394,16 @@ export function ChatView({ chatId }: { chatId: number }) {
         </header>
 
         {!connected && <div className="banner warn">{t('reconnecting')}</div>}
+        {chat.type === 'dm' && e2e !== 'ready' && (
+          <button type="button" className="banner error as-button" onClick={() => setUnlocking(true)}>
+            🔒 {t('e2e_locked_banner')}
+          </button>
+        )}
+        {chat.type === 'dm' && keyChanged && (
+          <button type="button" className="banner warn as-button" onClick={() => (peerId != null && useStore.getState().acknowledgeKey(peerId), setInfoOpen(true))}>
+            {t('e2e_key_changed', { name: chat.name })}
+          </button>
+        )}
 
         {pin && !searching && (
           <button
@@ -432,7 +471,14 @@ export function ChatView({ chatId }: { chatId: number }) {
               </span>
             </div>
           )}
-          {state?.loaded && visible.length === 0 && chat.type === 'dm' && <div className="chat-intro muted">{t('dm_intro', { name: chat.name })}</div>}
+          {state?.loaded && !state.hasOlder && chat.type === 'dm' && (
+            <div className="chat-intro">
+              <span className="tag ok">
+                <Icon name="shield" size={14} /> {t('e2e_badge')}
+              </span>
+              <p>{t('e2e_intro', { name: chat.name })}</p>
+            </div>
+          )}
           {visible.map((m, i) => {
             const prev = visible[i - 1];
             const next = visible[i + 1];
@@ -518,6 +564,23 @@ export function ChatView({ chatId }: { chatId: number }) {
           items={[
             { icon: 'info', label: chat.type === 'group' ? t('group_info') : t('profile'), onClick: () => setInfoOpen(true) },
             { icon: 'share', label: t('share_group'), onClick: () => void shareGroup(), hidden: chat.type !== 'group' },
+            {
+              icon: 'sparkles',
+              label: t('ai_summarize'),
+              hidden: !ai || visible.filter((m) => m.text).length < 3,
+              onClick: () =>
+                setAiTask({
+                  title: t('ai_summarize'),
+                  request: summarizeRequest(
+                    visible
+                      .filter((m) => m.text && m.type !== 'system' && !m.deleted)
+                      .slice(-80)
+                      .map((m) => `${m.user.name}: ${m.text}`)
+                      .join('\n'),
+                    lang,
+                  ),
+                }),
+            },
             { icon: chat.muted ? 'bell' : 'bellOff', label: chat.muted ? t('unmute') : t('mute'), onClick: () => void setPref({ muted: !chat.muted }), hidden: !chat.isMember },
             { icon: 'pin', label: chat.pinned ? t('unpin_chat') : t('pin_chat'), onClick: () => void setPref({ pinned: !chat.pinned }), hidden: !chat.isMember },
             { icon: 'archive', label: chat.archived ? t('unarchive') : t('archive'), onClick: () => void setPref({ archived: !chat.archived }), hidden: !chat.isMember },
@@ -554,7 +617,9 @@ export function ChatView({ chatId }: { chatId: number }) {
       )}
 
       {forward && <ForwardDialog message={forward} onClose={() => setForward(null)} />}
-      {report && <ReportDialog targetType="message" targetId={report.id} onClose={() => setReport(null)} />}
+      {report && <ReportDialog targetType="message" targetId={report.id} evidence={report.enc ? report.text : undefined} onClose={() => setReport(null)} />}
+      {aiTask && <AiResultDialog title={aiTask.title} request={aiTask.request} source={aiTask.source} onClose={() => setAiTask(null)} />}
+      {unlocking && <UnlockDialog onClose={() => setUnlocking(false)} />}
       {dialog === 'poll' && <PollDialog chatId={chat.id} onClose={() => setDialog(null)} />}
       {dialog === 'event' && <EventDialog chatId={chat.id} onClose={() => setDialog(null)} />}
       {confirmDelete && (

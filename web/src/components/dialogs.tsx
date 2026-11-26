@@ -8,7 +8,7 @@ import { useT, type Key } from '../lib/i18n.ts';
 import { uploadFile } from '../lib/media.ts';
 import { useStore } from '../lib/store.ts';
 import { Icon } from './icons.tsx';
-import { asset } from '../lib/platform.ts';
+import { saveAttachment, useAttachmentUrl } from './Message.tsx';
 import { Avatar, ChatAvatar, Field, GROUP_EMOJIS, Modal, Spinner, useDismiss } from './ui.tsx';
 
 export const categoryKey = (c: ChatCategory) => `cat_${c}` as Key;
@@ -424,7 +424,7 @@ export function ForwardDialog({ message, onClose }: { message: Message; onClose:
           onClick={async () => {
             setBusy(true);
             try {
-              await api.post(`/messages/${message.id}/forward`, { chatIds: picked });
+              await useStore.getState().forwardMessage(message, picked);
               toast(t('forwarded_ok'));
               onClose();
             } catch (e) {
@@ -455,7 +455,18 @@ export function ForwardDialog({ message, onClose }: { message: Message; onClose:
 
 const REASONS = ['spam', 'harassment', 'hate', 'scam', 'illegal', 'other'] as const;
 
-export function ReportDialog({ targetType, targetId, onClose }: { targetType: 'message' | 'user' | 'chat' | 'story'; targetId: number; onClose: () => void }) {
+export function ReportDialog({
+  targetType,
+  targetId,
+  evidence,
+  onClose,
+}: {
+  targetType: 'message' | 'user' | 'chat' | 'story';
+  targetId: number;
+  /** Decrypted text of an encrypted message, which reporting discloses to the moderators. */
+  evidence?: string;
+  onClose: () => void;
+}) {
   const t = useT();
   const error = useStore((s) => s.error);
   const toast = useStore((s) => s.toast);
@@ -475,7 +486,7 @@ export function ReportDialog({ targetType, targetId, onClose }: { targetType: 'm
             className="btn danger"
             onClick={async () => {
               try {
-                await api.post('/reports', { targetType, targetId, reason, details });
+                await api.post('/reports', { targetType, targetId, reason, details, evidence: evidence?.slice(0, 500) || undefined });
                 toast(t('report_sent'));
                 onClose();
               } catch (e) {
@@ -489,6 +500,12 @@ export function ReportDialog({ targetType, targetId, onClose }: { targetType: 'm
       }
     >
       <p className="muted">{t('report_intro')}</p>
+      {evidence !== undefined && (
+        <div className="notice">
+          <Icon name="shield" size={18} />
+          <span>{t('report_encrypted_notice')}</span>
+        </div>
+      )}
       <div className="radio-list">
         {REASONS.map((r) => (
           <label key={r} className="radio">
@@ -630,24 +647,83 @@ export function UserProfileModal() {
 export function Lightbox() {
   const a = useStore((s) => s.lightbox);
   const open = useStore((s) => s.openLightbox);
+  const error = useStore((s) => s.error);
+  const { url, failed } = useAttachmentUrl(a);
   useDismiss(() => open(null), !!a);
   if (!a) return null;
-  const url = asset(a.url);
   return (
     <div className="lightbox" onClick={() => open(null)}>
       <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
-        <a href={url} download={a.name} target="_blank" rel="noopener noreferrer" className="icon-btn" aria-label="Download">
+        <button type="button" className="icon-btn" aria-label="Download" onClick={() => void saveAttachment(a).catch(error)}>
           <Icon name="download" />
-        </a>
+        </button>
         <button type="button" className="icon-btn" onClick={() => open(null)} aria-label="Close">
           <Icon name="x" />
         </button>
       </div>
-      {a.kind === 'video' ? (
+      {!url ? (
+        failed ? (
+          <span>⚠️</span>
+        ) : (
+          <Spinner size={32} />
+        )
+      ) : a.kind === 'video' ? (
         <video src={url} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
       ) : (
         <img src={url} alt={a.name} onClick={(e) => e.stopPropagation()} />
       )}
     </div>
+  );
+}
+
+// ───────────── unlocking private messages on this device ─────────────
+
+export function UnlockDialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
+  const { unlock, toast } = useStore.getState();
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [wrong, setWrong] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    setWrong(false);
+    try {
+      await unlock(password);
+      toast(t('e2e_unlocked'));
+      onClose();
+    } catch {
+      // The key does not open: wrong password (the server never learns which it was).
+      setWrong(true);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={t('e2e_unlock_title')}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn ghost" onClick={onClose}>
+            {t('cancel')}
+          </button>
+          <button type="button" className="btn primary" disabled={busy || !password} onClick={() => void submit()}>
+            {busy ? <Spinner size={16} /> : <Icon name="shield" size={18} />} {t('e2e_unlock')}
+          </button>
+        </>
+      }
+    >
+      <p className="muted">{t('e2e_unlock_text')}</p>
+      {wrong && <div className="banner error">{t('err_wrong_password')}</div>}
+      <Field label={t('password')}>
+        <input
+          type="password"
+          autoComplete="current-password"
+          autoFocus
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && password && void submit()}
+        />
+      </Field>
+    </Modal>
   );
 }
