@@ -274,7 +274,10 @@ router.post('/stories', requireAuth, (req, res) => {
   const body = parse(
     z.object({
       text: z.string().trim().max(700).default(''),
-      bg: z.string().max(120).default(''),
+      bg: z
+        .string()
+        .regex(/^(linear-gradient\(135deg,#[0-9A-Fa-f]{6},#[0-9A-Fa-f]{6}\))?$/)
+        .default(''),
       media: zAttachment.nullable().optional(),
     }),
     req.body,

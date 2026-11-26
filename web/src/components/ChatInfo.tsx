@@ -17,7 +17,7 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
   const navigate = useNavigate();
   const lang = useStore((s) => s.lang);
   const me = useStore((s) => s.me)!;
-  const { error, toast, upsertChat, removeChat, openShare, openProfile, openLightbox, setMe } = useStore.getState();
+  const { error, toast, upsertChat, patchChat, removeChat, openShare, openProfile, openLightbox, setMe } = useStore.getState();
   const [members, setMembers] = useState<Member[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [q, setQ] = useState('');
@@ -73,20 +73,27 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
       cta: t('share_cta_group'),
     });
 
+  // Switches respond immediately; the change is rolled back if the server refuses it.
   const setPref = async (patch: { muted?: boolean; pinned?: boolean }) => {
+    const previous = { muted: chat.muted, pinned: chat.pinned };
+    patchChat(chat.id, patch);
     try {
       const r = await api.patch<{ chat: Chat }>(`/chats/${chat.id}/prefs`, patch);
       upsertChat(r.chat);
     } catch (e) {
+      patchChat(chat.id, previous);
       error(e);
     }
   };
 
   const setPolicy = async (patch: { sendPolicy?: 'all' | 'admins'; pinPolicy?: 'all' | 'admins' }) => {
+    const previous = { sendPolicy: chat.sendPolicy, pinPolicy: chat.pinPolicy };
+    patchChat(chat.id, patch);
     try {
       const r = await api.patch<{ chat: Chat }>(`/chats/${chat.id}`, patch);
       upsertChat(r.chat);
     } catch (e) {
+      patchChat(chat.id, previous);
       error(e);
     }
   };
@@ -139,7 +146,8 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
           <h3 dir="auto">{chat.name}</h3>
           {group ? (
             <div className="muted">
-              {t('public_group')} · {t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })}
+              {t('public_group')}
+              {chat.memberCount > 0 && ` · ${t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })}`}
             </div>
           ) : (
             peer && (

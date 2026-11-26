@@ -1534,6 +1534,13 @@ textarea:focus {
     display: grid;
   }
 }
+@media (pointer: coarse) {
+  .bubble {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
 .reactions {
   display: flex;
   flex-wrap: wrap;

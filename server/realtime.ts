@@ -34,6 +34,11 @@ export function unsubscribe(userId: number, chatId: number) {
   io?.in(userRoom(userId)).socketsLeave(chatRoom(chatId));
 }
 
+/** Close every live connection of a user (ban, forced sign-out). */
+export function kick(userId: number) {
+  io?.in(userRoom(userId)).disconnectSockets(true);
+}
+
 function dmChatIds(userId: number): number[] {
   return (
     db

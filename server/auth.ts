@@ -42,6 +42,11 @@ export function destroySession(token: string) {
   db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha(token));
 }
 
+/** After a password change: sign out every other device. */
+export function destroyOtherSessions(userId: number, keepToken: string | undefined) {
+  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').run(userId, keepToken ? sha(keepToken) : '');
+}
+
 export function userFromToken(token: string | undefined): UserRow | undefined {
   if (!token) return undefined;
   const row = db

@@ -34,8 +34,13 @@ export function EventsPage() {
 
   // Groups where I can publish an event; event groups first.
   const myGroups = Object.values(chats)
-    .filter((c): c is Chat => c.isMember && c.type === 'group' && c.world === me.world && (c.sendPolicy === 'all' || c.role === 'owner' || c.role === 'admin'))
-    .sort((a, b) => Number(b.category === 'event') - Number(a.category === 'event') || b.lastActivity - a.lastActivity);
+    .filter((c): c is Chat => c.isMember && c.type === 'group' && (c.sendPolicy === 'all' || c.role === 'owner' || c.role === 'admin'))
+    .sort(
+      (a, b) =>
+        Number(b.world === me.world) - Number(a.world === me.world) ||
+        Number(b.category === 'event') - Number(a.category === 'event') ||
+        b.lastActivity - a.lastActivity,
+    );
 
   return (
     <div className="page">

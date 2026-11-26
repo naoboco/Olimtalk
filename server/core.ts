@@ -399,8 +399,9 @@ export function joinChat(chat: ChatRow, userId: number, role: Role = 'member'): 
     .run(chat.id, userId, role, now(), chat.last_message_id ?? 0);
   if (!info.changes) return false;
   db.prepare('UPDATE chats SET member_count = member_count + 1 WHERE id = ?').run(chat.id);
-  if (chat.community_id) joinCommunityOnly(chat.community_id, userId);
   subscribe(userId, chat.id);
+  // Like any messenger with communities: members of a group also get the community's announcements.
+  if (chat.community_id) joinCommunity(chat.community_id, userId);
   if (chat.type === 'group') emitToChat(chat.id, 'chat:members', { chatId: chat.id, memberCount: chat.member_count + 1 });
   return true;
 }
@@ -438,7 +439,7 @@ function joinCommunityOnly(communityId: number, userId: number, role: Role = 'me
   return !!info.changes;
 }
 
-/** Join a community and its announcement group. */
+/** Join a community and its announcement group. Safe to call repeatedly. */
 export function joinCommunity(communityId: number, userId: number, role: Role = 'member') {
   joinCommunityOnly(communityId, userId, role);
   const ann = db.prepare('SELECT * FROM chats WHERE community_id = ? AND is_announcement = 1').all(communityId) as ChatRow[];
@@ -524,7 +525,9 @@ export function systemMessage(chat: ChatRow, userId: number, system: SystemInfo,
 
 /** Resolve @username mentions against the members of a chat. */
 export function resolveMentions(chatId: number, text: string): number[] {
-  const names = [...new Set([...text.matchAll(/(?:^|\s)@([a-zA-Z0-9_.]{3,30})/g)].map((m) => m[1]!.toLowerCase()))].slice(0, 20);
+  const found = [...text.matchAll(/(?:^|\s)@([a-zA-Z0-9_.]{3,30})/g)].map((m) => m[1]!.toLowerCase());
+  // "@name." at the end of a sentence: also try the name without the trailing dots.
+  const names = [...new Set(found.flatMap((n) => [n, n.replace(/\.+$/, '')]))].filter((n) => n.length >= 3).slice(0, 40);
   if (!names.length) return [];
   const rows = db
     .prepare(

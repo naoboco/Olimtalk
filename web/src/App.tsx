@@ -29,10 +29,7 @@ function Shell() {
   const me = useStore((s) => s.me)!;
   const chats = useStore((s) => s.chats);
   const location = useLocation();
-  const unread = useMemo(
-    () => Object.values(chats).reduce((n, c) => n + (c.isMember && !c.muted && !c.archived && (c.type === 'dm' || c.world === me.world) ? c.unread : 0), 0),
-    [chats, me.world],
-  );
+  const unread = useMemo(() => Object.values(chats).reduce((n, c) => n + (c.isMember && !c.muted && !c.archived ? c.unread : 0), 0), [chats]);
   useEffect(() => {
     document.title = unread ? `(${unread > 99 ? '99+' : unread}) OlimTalk` : 'OlimTalk';
   }, [unread]);

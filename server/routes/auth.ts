@@ -4,6 +4,7 @@ import { CITIES } from '../../shared/data.ts';
 import {
   clearSessionCookie,
   createSession,
+  destroyOtherSessions,
   destroySession,
   hashPassword,
   me,
@@ -12,7 +13,7 @@ import {
   tokenFromCookieHeader,
   verifyPassword,
 } from '../auth.ts';
-import { getUser, joinChat, joinCommunity, toMe, toUserPublic } from '../core.ts';
+import { getUser, joinChat, toMe, toUserPublic } from '../core.ts';
 import { db, type ChatRow, type UserRow } from '../db.ts';
 import { emitToUser } from '../realtime.ts';
 import { HttpError, bad, intParam, likeEscape, now, parse, rateLimiter, strQuery, zProfile, zUploadUrl, zWorld } from '../util.ts';
@@ -74,7 +75,6 @@ export function autoJoin(user: UserRow) {
     const chat = stmt.get(key) as ChatRow | undefined;
     if (!chat) continue;
     joinChat(chat, user.id);
-    if (chat.community_id) joinCommunity(chat.community_id, user.id);
   }
 }
 
@@ -172,6 +172,7 @@ router.patch('/me', requireAuth, async (req, res) => {
   if (body.password) {
     if (!(await verifyPassword(body.currentPassword ?? '', user.password_hash))) throw new HttpError(403, 'wrong_password');
     passwordHash = await hashPassword(body.password);
+    destroyOtherSessions(user.id, tokenFromCookieHeader(req.headers.cookie));
   }
   const next = {
     name: body.name ?? user.name,
@@ -187,8 +188,6 @@ router.patch('/me', requireAuth, async (req, res) => {
     `UPDATE users SET name=?, username=?, bio=?, avatar=?, profile=?, city=?, world=?, aliyah_year=?, password_hash=? WHERE id=?`,
   ).run(next.name, next.username, next.bio, next.avatar, next.profile, next.city, next.world, next.aliyah_year, passwordHash, user.id);
   const updated = getUser(user.id)!;
-  // Entering a new world for the first time: join its welcome groups too.
-  if (body.world && body.world !== user.world) autoJoin(updated);
   emitToUser(user.id, 'me:update', toMe(updated));
   res.json({ me: toMe(updated) });
 });

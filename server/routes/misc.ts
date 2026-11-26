@@ -7,7 +7,7 @@ import type { Report } from '../../shared/types.ts';
 import { me, requireAuth } from '../auth.ts';
 import { getUser } from '../core.ts';
 import { UPLOAD_DIR, db, type MessageRow } from '../db.ts';
-import { emitToChat } from '../realtime.ts';
+import { emitToChat, kick } from '../realtime.ts';
 import { HttpError, bad, intParam, now, parse, rateLimiter } from '../util.ts';
 
 export const router = Router();
@@ -208,6 +208,7 @@ router.post('/admin/reports/:id', requireAuth, (req, res) => {
     if (target && !target.is_admin && !target.is_system) {
       db.prepare('UPDATE users SET banned = 1 WHERE id = ?').run(target.id);
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(target.id);
+      kick(target.id);
     }
   }
   db.prepare("UPDATE reports SET status = 'closed' WHERE id = ?").run(id);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WORLD_META } from '../../../shared/data.ts';
-import { WORLDS, type Chat, type UserPublic, type World } from '../../../shared/types.ts';
+import { WORLDS, type Chat, type UserPublic } from '../../../shared/types.ts';
 import { ChatView } from '../components/ChatView.tsx';
 import { CommunityDialog, GroupDialog } from '../components/dialogs.tsx';
 import { Icon, Logo } from '../components/icons.tsx';
@@ -18,25 +18,14 @@ type Filter = 'all' | 'unread' | 'groups' | 'dms';
 export function WorldSwitcher() {
   const t = useT();
   const me = useStore((s) => s.me)!;
-  const chats = useStore((s) => s.chats);
   const { switchWorld, error } = useStore.getState();
   const menu = useMenu();
   const [busy, setBusy] = useState(false);
-  // Unread messages waiting in the other worlds.
-  const elsewhere = useMemo(() => {
-    const map: Partial<Record<World, number>> = {};
-    for (const c of Object.values(chats)) {
-      if (c.isMember && c.type === 'group' && c.world && c.world !== me.world && !c.muted && !c.archived) map[c.world] = (map[c.world] ?? 0) + c.unread;
-    }
-    return map;
-  }, [chats, me.world]);
-  const total = Object.values(elsewhere).reduce((a, b) => a + (b ?? 0), 0);
   return (
     <>
       <button type="button" className="world-switch" onClick={menu.openFrom} disabled={busy} aria-label={t('switch_world')} title={t('switch_world')}>
         <WorldBadge world={me.world} size={20} />
         {busy ? <Spinner size={14} /> : <Icon name="down" size={15} />}
-        {total > 0 && <span className="dot" />}
       </button>
       {menu.at && (
         <Menu
@@ -45,7 +34,7 @@ export function WorldSwitcher() {
           onClose={menu.close}
           header={<div className="menu-title">{t('switch_world')}</div>}
           items={WORLDS.map((w) => ({
-            label: `${WORLD_META[w].code} · ${WORLD_META[w].label}${w === me.world ? '  ✓' : ''}${elsewhere[w] ? `  (${elsewhere[w]})` : ''}`,
+            label: `${WORLD_META[w].code} · ${WORLD_META[w].label}${w === me.world ? '  ✓' : ''}`,
             onClick: async () => {
               setBusy(true);
               try {
@@ -68,6 +57,7 @@ function ChatRow({ chat, active }: { chat: Chat; active: boolean }) {
   const navigate = useNavigate();
   const lang = useStore((s) => s.lang);
   const meId = useStore((s) => s.me?.id);
+  const myWorld = useStore((s) => s.me?.world);
   const typing = useStore((s) => s.typing[chat.id]);
   const typers = Object.entries(typing ?? {}).filter(([id]) => Number(id) !== meId);
   const last = chat.lastMessage;
@@ -87,6 +77,7 @@ function ChatRow({ chat, active }: { chat: Chat; active: boolean }) {
             {chat.name}
           </span>
           {chat.isAnnouncement && <Icon name="megaphone" size={14} className="dim" />}
+          {chat.type === 'group' && chat.world && chat.world !== myWorld && <WorldBadge world={chat.world} size={15} />}
           <span className={`chat-row-time ${chat.unread ? 'unread' : ''}`}>{formatListTime(last?.createdAt ?? chat.lastActivity, lang, t)}</span>
         </span>
         <span className="chat-row-bottom">
@@ -105,7 +96,6 @@ function ChatRow({ chat, active }: { chat: Chat; active: boolean }) {
 function ChatList({ activeId }: { activeId: number | null }) {
   const t = useT();
   const navigate = useNavigate();
-  const me = useStore((s) => s.me)!;
   const chats = useStore((s) => s.chats);
   const loaded = useStore((s) => s.chatsLoaded);
   const { error, upsertChat, openProfile } = useStore.getState();
@@ -116,10 +106,17 @@ function ChatList({ activeId }: { activeId: number | null }) {
   const [dialog, setDialog] = useState<'group' | 'community' | null>(null);
   const newMenu = useMenu();
 
-  // Groups of the current world + every private conversation.
+  // One inbox for every world. Private conversations and announcement groups show up
+  // once they hold a message (admins always see their announcement groups).
   const mine = useMemo(
-    () => Object.values(chats).filter((c) => c.isMember && (c.type === 'dm' ? !!c.lastMessage || c.id === activeId : c.world === me.world)),
-    [chats, me.world, activeId],
+    () =>
+      Object.values(chats).filter((c) => {
+        if (!c.isMember) return false;
+        if (c.lastMessage || c.id === activeId) return true;
+        if (c.type === 'dm') return false;
+        return !c.isAnnouncement || c.role === 'owner' || c.role === 'admin';
+      }),
+    [chats, activeId],
   );
   const archivedCount = mine.filter((c) => c.archived).length;
   const list = useMemo(() => {

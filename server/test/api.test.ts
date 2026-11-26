@@ -216,6 +216,10 @@ test('messaging: realtime delivery, reply, edit, reactions, pin, star, forward, 
     const gone = afterDelete.messages.find((m) => m.id === reply.id)!;
     assert.equal(gone.deleted, true);
     assert.equal(gone.text, '');
+
+    // "@name." at the end of a sentence still mentions @name
+    const { message: dotted } = await alice.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'Merci @bob.' }, 201);
+    assert.deepEqual(dotted.mentions, [bob.me.id]);
   } finally {
     bobSocket.close();
   }
@@ -284,6 +288,13 @@ test('communities: create, announcement group, join', async () => {
   assert.equal(chat.communityId, community.id);
   await bob.post('/api/chats', { name: 'Intrus', communityId: community.id }, 403);
 
+  // Joining one group of a community brings the community and its announcements along.
+  await admin.post(`/api/chats/${chat.id}/join`);
+  const viaGroup = await admin.get<{ community: Community }>(`/api/communities/${community.id}`);
+  assert.equal(viaGroup.community.isMember, true);
+  assert.equal(viaGroup.community.groups!.find((g) => g.isAnnouncement)!.isMember, true);
+  await admin.post(`/api/communities/${community.id}/leave`);
+
   const joined = await bob.post<{ kind: string; community: Community }>(`/api/invite/${community.inviteCode}/join`);
   assert.equal(joined.community.isMember, true);
   assert.equal(joined.community.memberCount, 2);
@@ -295,6 +306,7 @@ test('communities: create, announcement group, join', async () => {
 test('stories: publish, feed, views are visible to the author only', async () => {
   await alice.post('/api/stories', { text: 'Premier jour d’oulpan !', bg: 'linear-gradient(135deg,#2F6BFF,#12A594)' }, 201);
   await alice.post('/api/stories', {}, 400);
+  await alice.post('/api/stories', { text: 'x', bg: 'url(https://evil.example/track.gif)' }, 400);
   const feed = await bob.get<{ groups: StoryGroup[] }>('/api/stories');
   const group = feed.groups.find((g) => g.user.id === alice.me.id)!;
   assert.equal(group.stories.length, 1);
@@ -355,6 +367,24 @@ test('uploads: allowed types only, stored under a safe name, served inertly', as
   await alice.post(`/api/chats/${chat.id}/messages`, { attachment: { ...file, name: 'photo.png', size: 10, mime: 'image/png' } }, 201);
 });
 
+test('account: changing the password signs out other devices; a ban closes the account', async () => {
+  const eve = await Client.register('Eve');
+  const phone = new Client();
+  await phone.post('/api/auth/login', { email: 'eve@example.com', password: 'password123' });
+  await eve.patch('/api/me', { password: 'new-password-1', currentPassword: 'wrong' }, 403);
+  await eve.patch('/api/me', { password: 'new-password-1', currentPassword: 'password123' });
+  await eve.get('/api/chats'); // the device that changed it stays signed in
+  await phone.get('/api/chats', 401);
+  await new Client().post('/api/auth/login', { email: 'eve@example.com', password: 'password123' }, 401);
+
+  await alice.post('/api/reports', { targetType: 'user', targetId: eve.me.id, reason: 'harassment' }, 201);
+  const { reports } = await admin.get<{ reports: { id: number; targetType: string; targetId: number }[] }>('/api/admin/reports');
+  const report = reports.find((r) => r.targetType === 'user' && r.targetId === eve.me.id)!;
+  await admin.post(`/api/admin/reports/${report.id}`, { action: 'ban' });
+  await eve.get('/api/chats', 401);
+  await new Client().post('/api/auth/login', { email: 'eve@example.com', password: 'new-password-1' }, 403);
+});
+
 test('moderation: reports are visible to platform admins only', async () => {
   const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Modération test' }, 201);
   await bob.post(`/api/chats/${chat.id}/join`);
@@ -362,19 +392,35 @@ test('moderation: reports are visible to platform admins only', async () => {
   await alice.post('/api/reports', { targetType: 'message', targetId: message.id, reason: 'spam' }, 201);
   await alice.get('/api/admin/reports', 403);
   const { reports } = await admin.get<{ reports: { id: number; excerpt: string; status: string }[] }>('/api/admin/reports');
-  assert.equal(reports[0]!.excerpt, 'Achetez mes cryptos !!!');
-  await admin.post(`/api/admin/reports/${reports[0]!.id}`, { action: 'remove' });
+  const report = reports.find((r) => r.excerpt === 'Achetez mes cryptos !!!')!;
+  assert.equal(report.status, 'open');
+  await admin.post(`/api/admin/reports/${report.id}`, { action: 'remove' });
   const history = await alice.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
   assert.equal(history.messages.find((m) => m.id === message.id)!.deleted, true);
 });
 
-test('switching world joins the welcome groups of the new world', async () => {
+test('worlds: one inbox, explore and creation follow the current world', async () => {
   const dave = await Client.register('Dave', { world: 'en', city: 'jerusalem', profile: 'legal' });
   let { chats } = await dave.get<{ chats: Chat[] }>('/api/chats');
   assert.ok(chats.every((c) => c.world === 'en'));
   assert.ok(chats.some((c) => c.name === 'Legal Professionals'));
-  await dave.patch('/api/me', { world: 'es' });
+  const before = chats.length;
+
+  // Switching world keeps the conversations and does not join anything behind the user's back.
+  const { me } = await dave.patch<{ me: Me }>('/api/me', { world: 'es' });
+  assert.equal(me.world, 'es');
+  ({ chats } = await dave.get<{ chats: Chat[] }>('/api/chats'));
+  assert.equal(chats.length, before);
+
+  // Explore now shows the Spanish-speaking world; joining there adds to the same inbox.
+  const explore = await dave.get<{ groups: Chat[] }>('/api/explore?category=city&q=Jerusal');
+  assert.equal(explore.groups[0]!.name, 'Jerusalén');
+  await dave.post(`/api/chats/${explore.groups[0]!.id}/join`);
   ({ chats } = await dave.get<{ chats: Chat[] }>('/api/chats'));
   assert.ok(chats.some((c) => c.world === 'es' && c.name === 'Jerusalén'));
   assert.ok(chats.some((c) => c.world === 'en' && c.name === 'Jerusalem'));
+
+  // A new group is created in the current world.
+  const { chat } = await dave.post<{ chat: Chat }>('/api/chats', { name: 'Mate y charla' }, 201);
+  assert.equal(chat.world, 'es');
 });

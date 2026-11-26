@@ -247,7 +247,7 @@ export function ChatView({ chatId }: { chatId: number }) {
   let subtitle: string;
   if (typers.length) subtitle = chat.type === 'dm' ? t('typing') : typers.length === 1 ? t('typing_one', { name: typers[0]! }) : t('typing_many', { n: typers.length });
   else if (chat.type === 'dm') subtitle = chat.peer?.online ? t('online') : chat.peer ? lastSeen(chat.peer.lastSeen, lang, t) : '';
-  else subtitle = `${t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })} · ${t('public_group')}`;
+  else subtitle = chat.memberCount > 0 ? `${t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })} · ${t('public_group')}` : t('public_group');
 
   const shareGroup = () =>
     chat.inviteCode &&

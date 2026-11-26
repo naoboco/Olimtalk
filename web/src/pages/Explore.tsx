@@ -42,9 +42,13 @@ export function GroupCard({ chat, onChange }: { chat: Chat; onChange?: (c: Chat)
           </strong>
           <small dir="auto">{chat.description}</small>
           <span className="group-card-meta">
-            <span>
-              <Icon name="users" size={14} /> {t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })}
-            </span>
+            {chat.memberCount > 0 ? (
+              <span>
+                <Icon name="users" size={14} /> {t('members_n', { n: chat.memberCount, count: compactNumber(chat.memberCount, lang) })}
+              </span>
+            ) : (
+              <span>✨ {t('new_badge')}</span>
+            )}
             <span>
               {CATEGORY_EMOJI[chat.category]} {chat.category === 'city' && chat.city ? cityName(chat.city, lang) : t(categoryKey(chat.category))}
             </span>
@@ -169,7 +173,7 @@ export function ExplorePage() {
                     <small dir="auto">{c.description}</small>
                     <span className="group-card-meta">
                       <span>{t('groups_n', { n: c.groupCount })}</span>
-                      <span>{t('members_n', { n: c.memberCount, count: compactNumber(c.memberCount, lang) })}</span>
+                      {c.memberCount > 0 && <span>{t('members_n', { n: c.memberCount, count: compactNumber(c.memberCount, lang) })}</span>}
                     </span>
                     {c.isMember && <span className="tag ok">✓ {t('joined')}</span>}
                   </button>
@@ -286,7 +290,7 @@ export function CommunityPage() {
               <p dir="auto">{community.description}</p>
               <span className="group-card-meta">
                 <span>{t('groups_n', { n: community.groupCount })}</span>
-                <span>{t('members_n', { n: community.memberCount, count: compactNumber(community.memberCount, lang) })}</span>
+                {community.memberCount > 0 && <span>{t('members_n', { n: community.memberCount, count: compactNumber(community.memberCount, lang) })}</span>}
                 <span>
                   <Icon name="globe" size={14} /> {t('public_group')}
                 </span>
