@@ -214,6 +214,19 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 `);
 
+// Translations of public messages, kept so that each one is paid for once per language.
+// `text` is NULL when the message needed no translation into that language.
+db.exec(`
+CREATE TABLE IF NOT EXISTS translations (
+  message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  lang        TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  text        TEXT,
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (message_id, lang)
+);
+`);
+
 // Columns added after the first release (CREATE TABLE IF NOT EXISTS does not add them).
 function addColumn(table: string, column: string, definition: string) {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
@@ -228,6 +241,11 @@ addColumn('users', 'vault', 'TEXT');
 // Privacy choices.
 addColumn('users', 'hide_presence', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'no_receipts', 'INTEGER NOT NULL DEFAULT 0');
+// Automatic translation: on unless switched off (NULL = not chosen yet), private messages
+// only when asked for, and the other languages the person reads without help.
+addColumn('users', 'auto_translate', 'INTEGER');
+addColumn('users', 'translate_private', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'read_langs', "TEXT NOT NULL DEFAULT ''");
 // Secret tokens of the personal calendar feed and of the forwarding e-mail address.
 addColumn('users', 'cal_token', 'TEXT');
 addColumn('users', 'mail_token', 'TEXT');
@@ -279,6 +297,9 @@ export interface UserRow {
   vault: string | null;
   hide_presence: number;
   no_receipts: number;
+  auto_translate: number | null;
+  translate_private: number;
+  read_langs: string;
   cal_token: string | null;
   mail_token: string | null;
 }

@@ -39,6 +39,7 @@ import {
 } from './e2ee.ts';
 import { detectLang, translate, type Key } from './i18n.ts';
 import { API_ORIGIN, TOKEN_MODE, getToken, loadToken, saveToken } from './platform.ts';
+import { autoTranslate, clearTranslationCache, refreshTranslations, type Translation } from './translate.ts';
 import type { SharePayload } from './share.ts';
 
 export type ClientMessage = Message & {
@@ -70,7 +71,9 @@ interface State {
   /** The apps: a session exists but the server could not be reached at start-up. */
   bootError: boolean;
   /** Public settings of the server: store links once the apps are published. */
-  config: { appStoreUrl: string | null; playStoreUrl: string | null; contact: string | null; mail?: boolean } | null;
+  config: { appStoreUrl: string | null; playStoreUrl: string | null; contact: string | null; mail?: boolean; translate?: boolean } | null;
+  /** Translations of messages into my language, by message id. */
+  tr: Record<number, Translation>;
   /** 'locked': signed in, but this device does not hold the key that opens private messages. */
   e2e: 'ready' | 'locked';
   /** The person's own AI and calendars, decrypted from their vault. */
@@ -228,6 +231,7 @@ export const useStore = create<State>((set, get) => ({
   calendars: [],
   mailUnread: 0,
   keyAlerts: {},
+  tr: {},
   lang: detectLang(),
   theme: loadTheme(),
   connected: false,
@@ -249,7 +253,7 @@ export const useStore = create<State>((set, get) => ({
     set({ bootError: false });
     void api
       .get<NonNullable<State['config']>>('/config')
-      .then((config) => set({ config }))
+      .then((config) => (set({ config }), refreshTranslations()))
       .catch(() => undefined);
     try {
       const { me } = await api.get<{ me: Me | null }>('/me');
@@ -325,6 +329,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const vault = await loadVault();
       set({ ai: vault.ai ?? null, calendars: vault.calendars ?? [] });
+      refreshTranslations();
     } catch {
       /* the vault stays closed; nothing else depends on it */
     }
@@ -335,6 +340,7 @@ export const useStore = create<State>((set, get) => ({
     for (const key of Object.keys(next) as (keyof Vault)[]) if (next[key] == null) delete next[key];
     await saveVault(next);
     set({ ai: next.ai ?? null, calendars: next.calendars ?? [] });
+    refreshTranslations();
   },
 
   async deleteAccount(password) {
@@ -371,12 +377,16 @@ export const useStore = create<State>((set, get) => ({
       void get().loadChats();
       void get().loadStories();
     }
+    if (me && prev && (me.world !== prev.world || me.autoTranslate !== prev.autoTranslate || me.translatePrivate !== prev.translatePrivate || me.readLangs.join() !== prev.readLangs.join())) {
+      refreshTranslations();
+    }
     if (!me) void saveToken(null);
     if (!me && prev) {
       socket?.close();
       socket = null;
       void forgetKeys(prev.id);
-      set({ chats: {}, chatsLoaded: false, msgs: {}, stories: [], typing: {}, connected: false, activeChatId: null, e2e: 'locked', ai: null, calendars: [], mailUnread: 0, keyAlerts: {} });
+      void clearTranslationCache();
+      set({ chats: {}, chatsLoaded: false, msgs: {}, stories: [], typing: {}, connected: false, activeChatId: null, e2e: 'locked', ai: null, calendars: [], mailUnread: 0, keyAlerts: {}, tr: {} });
     }
   },
 
@@ -447,6 +457,7 @@ export const useStore = create<State>((set, get) => ({
       for (const c of chats) next[c.id] = c;
       return { chats: next, chatsLoaded: true, keyAlerts: { ...s.keyAlerts, ...alerts } };
     });
+    refreshTranslations();
   },
 
   acknowledgeKey(peerId) {
@@ -563,6 +574,7 @@ export const useStore = create<State>((set, get) => ({
         items = items.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
         return { msgs: { ...s.msgs, [chatId]: { items, hasOlder, hasNewer, loaded: true, loading: false } } };
       });
+      autoTranslate(r.messages.filter((m) => !m.enc || m.e2e === 'ok'));
     } catch (e) {
       set((s) => ({ msgs: { ...s.msgs, [chatId]: { ...(s.msgs[chatId] ?? emptyMsgs()), loading: false, loaded: true } } }));
       get().error(e);
@@ -842,6 +854,7 @@ function connect() {
       return;
     }
     onIncoming(m);
+    if (!m.enc || m.e2e === 'ok') autoTranslate([m]);
     s.typing[m.chatId]?.[m.userId] && clearTyping(m.chatId, m.userId);
   }));
 
@@ -855,6 +868,11 @@ function connect() {
       if (typeof opened !== 'string') e = { ...event, patch: { ...event.patch, text: opened.text, attachment: opened.attachment ?? null } };
     }
     s.patchMessage(e.chatId, e.id, (m) => ({ ...m, ...e.patch, ...(e.patch.deleted ? { reactions: [], replyTo: null, enc: null } : {}) }));
+    if (e.patch.text !== undefined) {
+      // The text changed: its translation no longer stands.
+      const edited = store.getState().msgs[e.chatId]?.items.find((m) => m.id === e.id);
+      if (edited && (!edited.enc || edited.e2e === 'ok')) autoTranslate([edited]);
+    }
     const chat = s.chats[e.chatId];
     if (chat?.lastMessage?.id === e.id) {
       s.patchChat(e.chatId, {

@@ -229,6 +229,7 @@ router.patch('/messages/:id', requireAuth, (req, res) => {
     Object.keys(meta).length ? JSON.stringify(meta) : null,
     row.id,
   );
+  db.prepare('DELETE FROM translations WHERE message_id = ?').run(row.id);
   const patch: MessagePatchEvent = { chatId: row.chat_id, id: row.id, patch: { text: body.text, editedAt: t, mentions } };
   emitToChat(row.chat_id, 'message:patch', patch);
   res.json({ ok: true });

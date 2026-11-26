@@ -197,6 +197,9 @@ router.patch('/me', requireAuth, async (req, res) => {
       vault: z.string().max(40_000).nullable().optional(),
       hidePresence: z.boolean().optional(),
       noReceipts: z.boolean().optional(),
+      autoTranslate: z.boolean().optional(),
+      translatePrivate: z.boolean().optional(),
+      readLangs: z.array(z.enum(['fr', 'en', 'es', 'ru', 'he'])).max(5).optional(),
     }),
     req.body,
   );
@@ -228,7 +231,7 @@ router.patch('/me', requireAuth, async (req, res) => {
   };
   db.prepare(
     `UPDATE users SET name=?, username=?, bio=?, avatar=?, profile=?, city=?, world=?, aliyah_year=?, password_hash=?,
-       hide_presence=?, no_receipts=? WHERE id=?`,
+       hide_presence=?, no_receipts=?, auto_translate=?, translate_private=?, read_langs=? WHERE id=?`,
   ).run(
     next.name,
     next.username,
@@ -241,6 +244,9 @@ router.patch('/me', requireAuth, async (req, res) => {
     passwordHash,
     body.hidePresence === undefined ? user.hide_presence : +body.hidePresence,
     body.noReceipts === undefined ? user.no_receipts : +body.noReceipts,
+    body.autoTranslate === undefined ? user.auto_translate : +body.autoTranslate,
+    body.translatePrivate === undefined ? user.translate_private : +body.translatePrivate,
+    body.readLangs === undefined ? user.read_langs : [...new Set(body.readLangs)].join(','),
     user.id,
   );
   const updated = getUser(user.id)!;

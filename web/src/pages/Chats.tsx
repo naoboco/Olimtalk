@@ -60,7 +60,10 @@ function ChatRow({ chat, active }: { chat: Chat; active: boolean }) {
   const myWorld = useStore((s) => s.me?.world);
   const typing = useStore((s) => s.typing[chat.id]);
   const typers = Object.entries(typing ?? {}).filter(([id]) => Number(id) !== meId);
-  const last = chat.lastMessage;
+  const translation = useStore((s) => (chat.lastMessage ? s.tr[chat.lastMessage.id] : undefined));
+  let last = chat.lastMessage;
+  // Shown in my language when its translation is there.
+  if (last && translation?.state === 'done' && translation.text && translation.source === last.text && translation.lang === lang) last = { ...last, text: translation.text };
   let preview = '';
   if (typers.length) preview = chat.type === 'dm' ? t('typing') : t('typing_one', { name: typers[0]![1].name });
   else if (last) {

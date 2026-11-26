@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Chat, Message } from '../../../shared/types.ts';
-import { explainRequest, summarizeRequest, translateRequest, type AiRequest } from '../lib/ai/index.ts';
+import { explainRequest, summarizeRequest, type AiRequest } from '../lib/ai/index.ts';
 import { api } from '../lib/api.ts';
 import { compactNumber, formatDay, lastSeen } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
 import { copyText, inviteUrl } from '../lib/share.ts';
 import { getSocket, useStore, type ClientMessage } from '../lib/store.ts';
+import { autoTranslate, translateNow, translationOf } from '../lib/translate.ts';
 import { AiResultDialog, useAi } from './Ai.tsx';
 import { ChatInfo } from './ChatInfo.tsx';
 import { Composer } from './Composer.tsx';
 import { Confirm, EventDialog, ForwardDialog, PollDialog, ReportDialog, UnlockDialog } from './dialogs.tsx';
 import { Icon } from './icons.tsx';
 import { MessageRow, previewLine } from './Message.tsx';
+import { PrivateTranslationDialog } from './Translate.tsx';
 import { ChatAvatar, Empty, IconButton, Menu, QUICK_REACTIONS, Spinner, useMenu, type MenuItem } from './ui.tsx';
 
 const sameDay = (a: number, b: number) => new Date(a).toDateString() === new Date(b).toDateString();
@@ -30,6 +32,7 @@ export function ChatView({ chatId }: { chatId: number }) {
   const ai = useAi();
   const [aiTask, setAiTask] = useState<{ title: string; request: AiRequest; source?: string } | null>(null);
   const [unlocking, setUnlocking] = useState(false);
+  const [translateAsk, setTranslateAsk] = useState<ClientMessage | null>(null);
   const { loadMessages, markRead, setActiveChat, fetchChat, upsertChat, patchMessage, hideMessage, error, toast, openShare, send } = useStore.getState();
 
   const [missing, setMissing] = useState(false);
@@ -43,6 +46,7 @@ export function ChatView({ chatId }: { chatId: number }) {
   const [dialog, setDialog] = useState<'poll' | 'event' | null>(null);
   const [pins, setPins] = useState<Message[]>([]);
   const [pinIndex, setPinIndex] = useState(0);
+  const pinTr = useStore((st) => (pins[pinIndex] ? st.tr[pins[pinIndex]!.id] : undefined));
   const [highlight, setHighlight] = useState<number | null>(null);
   const [newBelow, setNewBelow] = useState(0);
   const [showDown, setShowDown] = useState(false);
@@ -93,6 +97,7 @@ export function ChatView({ chatId }: { chatId: number }) {
         if (cancelled) return;
         setPins(opened);
         setPinIndex(0);
+        autoTranslate(opened.filter((m) => !m.enc || m.e2e === 'ok'));
       })
       .catch(() => undefined);
     return () => {
@@ -324,8 +329,15 @@ export function ChatView({ chatId }: { chatId: number }) {
       {
         icon: 'globe',
         label: t('ai_translate'),
-        hidden: !ai || !m.text,
-        onClick: () => setAiTask({ title: t('ai_translate'), request: translateRequest(m.text, lang), source: m.text }),
+        hidden: mine || !m.text || m.type === 'event' || m.type === 'poll',
+        onClick: () =>
+          void translateNow(m).then((result) => {
+            // A private message is only shown to a translation service once its reader agreed.
+            if (result === 'consent') setTranslateAsk(m);
+            else if (result === 'same') toast(t('tr_same'));
+            else if (result === 'failed') toast(t('tr_failed'), 'error');
+            else if (result === 'unavailable') toast(t('tr_unavailable'), 'error');
+          }),
       },
       {
         icon: 'sparkles',
@@ -353,6 +365,9 @@ export function ChatView({ chatId }: { chatId: number }) {
   };
 
   const pin = pins[pinIndex];
+  // The pinned message is shown in my language too, when its translation is there.
+  const pinTranslation = translationOf(pinTr, pin?.text ?? '', lang);
+  const pinText = (pinTranslation?.state === 'done' && pinTranslation.text) || pin?.text || '';
   const firstUnreadId = unreadFrom != null ? visible.find((m) => m.id > unreadFrom && m.userId !== me.id && m.type !== 'system')?.id : undefined;
 
   return (
@@ -420,7 +435,7 @@ export function ChatView({ chatId }: { chatId: number }) {
                 {t('pinned_message')}
                 {pins.length > 1 && ` ${pinIndex + 1}/${pins.length}`}
               </strong>
-              <span dir="auto">{previewLine({ type: pin.type, text: pin.poll?.question ?? (pin.text || pin.attachment?.name || ''), deleted: false }, t)}</span>
+              <span dir="auto">{previewLine({ type: pin.type, text: pin.poll?.question ?? (pinText || pin.attachment?.name || ''), deleted: false }, t)}</span>
             </span>
           </button>
         )}
@@ -620,6 +635,7 @@ export function ChatView({ chatId }: { chatId: number }) {
       {report && <ReportDialog targetType="message" targetId={report.id} evidence={report.enc ? report.text : undefined} onClose={() => setReport(null)} />}
       {aiTask && <AiResultDialog title={aiTask.title} request={aiTask.request} source={aiTask.source} onClose={() => setAiTask(null)} />}
       {unlocking && <UnlockDialog onClose={() => setUnlocking(false)} />}
+      {translateAsk && <PrivateTranslationDialog message={translateAsk} onClose={() => setTranslateAsk(null)} />}
       {dialog === 'poll' && <PollDialog chatId={chat.id} onClose={() => setDialog(null)} />}
       {dialog === 'event' && <EventDialog chatId={chat.id} onClose={() => setDialog(null)} />}
       {confirmDelete && (

@@ -21,6 +21,7 @@ Seules les conversations privées (à deux) sont privées — et **chiffrées de
 | **Partage** | WhatsApp, Facebook, Telegram, X, e-mail, lien, et image « story » avec QR code pour Instagram |
 | **Guide** | étapes clés et liens officiels selon le profil : étudiant, entrepreneur, salarié, médical, juridique |
 | **Mondes** | FR · EN · ES · RU : langue de l'interface et groupes propres à chaque monde |
+| **Traduction automatique** | un message écrit dans une autre langue s'affiche dans celle du lecteur (un message russe en français, et inversement), l'original à un toucher |
 | **Modération** | signalements, blocage, bannissement, panneau pour les modérateurs |
 | **Vie privée** | messages privés chiffrés de bout en bout, code de sécurité à comparer, appareils connectés, présence et confirmations de lecture masquables |
 | **Mes connexions** | sa propre IA (Claude, ChatGPT, Gemini, Mistral ou tout service compatible), son agenda (Google, Outlook / Microsoft 365, Apple…) et sa boîte mail (Gmail, Outlook ou autre) |
@@ -58,6 +59,29 @@ Ce que cela ne couvre pas, à dire clairement aux utilisateurs :
   si le mot de passe d'une personne est un jour compromis, ses anciens messages privés peuvent être lus.
 - **Sur le site web**, le code qui chiffre est servi par le serveur : il faut lui faire confiance. Les applications
   mobiles embarquent ce code, ce qui écarte ce risque.
+
+## Traduction automatique
+
+Chacun lit dans sa langue. Un francophone voit en français le message d'un russophone, qui voit lui-même en russe
+la réponse — dans les groupes, dans la liste des discussions et pour le message épinglé. Sous chaque message
+traduit : « Traduit du russe · Voir l'original ».
+
+- **Messages publics** : traduits par le serveur, **une seule fois par langue**, puis conservés. Le deuxième
+  lecteur ne coûte rien. Un message modifié est retraduit, un message supprimé emporte ses traductions.
+- **Messages privés** : ils sont chiffrés de bout en bout, le serveur ne peut donc pas les traduire. Ils ne le sont
+  que si leur lecteur l'active : par sa propre IA s'il en a connecté une (rien ne passe par OlimTalk), sinon son
+  appareil envoie le texte au service de traduction (OlimTalk n'en garde rien). C'est expliqué au moment de l'activer.
+- **Réglages** (*Profil → Traduction automatique*) : tout couper, ou indiquer les langues qu'on lit déjà
+  (« Je lis aussi : English, עברית… ») pour qu'elles ne soient pas traduites.
+- La langue de chaque message est reconnue sur l'appareil (`shared/lang.ts`) : ce qui est reconnu comme étant dans la langue du
+  lecteur n'est pas envoyé à la traduction.
+
+**À activer côté serveur** : une clé suffit (`ANTHROPIC_API_KEY`, traduction par Claude), ou n'importe quel service
+compatible « chat completions » — voir [`.env.example`](.env.example). Chaque nouvelle traduction est facturée par
+ce service à l'exploitant ; `TRANSLATE_MODEL` permet de choisir un modèle moins cher et `TRANSLATE_HOURLY_LIMIT`
+plafonne l'usage par personne. Sans réglage, la traduction serveur est coupée et chacun peut traduire avec sa propre IA.
+
+Pas encore traduits : les sondages, les fiches d'événements, les stories et les noms de groupes.
 
 ## Mes connexions : IA, agenda, boîte mail
 
@@ -143,13 +167,16 @@ server/            API Express, temps réel Socket.IO, base SQLite
   seed.ts          groupes et communautés de départ des quatre mondes
   test/            tests de bout en bout de l'API
   routes/connect.ts  agenda (.ics) et boîte mail ; smtp.ts : réception directe des e-mails
+  translate.ts     service de traduction (Claude ou compatible) ; routes/translate.ts : traductions mises en cache
 shared/            types et données communs (villes, mondes)
   e2e.ts           chiffrement de bout en bout (Web Crypto), commun au site, aux applications et aux tests
+  lang.ts          reconnaissance de la langue d'un message
 web/src/           interface React (Vite), commune au site et aux applications
   locales/         traductions fr / en / es / ru
   content/         contenu du guide d'intégration et liens officiels
   lib/e2ee.ts      clés sur l'appareil, messages et fichiers chiffrés, coffre des connexions
   lib/ai/          un connecteur par fournisseur d'IA (SDK officiel pour Claude)
+  lib/translate.ts traduction automatique : quoi traduire, par qui, et où le résultat est gardé
   lib/platform.ts  site ou application : adresse du serveur, session, liens externes
   lib/native.ts    pont avec le téléphone : bouton retour, liens d'invitation, barres système
 android/, ios/     projets natifs (Capacitor)

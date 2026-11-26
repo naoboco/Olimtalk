@@ -8,6 +8,7 @@ import { attachmentBlob, attachmentUrl } from '../lib/e2ee.ts';
 import { IS_NATIVE } from '../lib/platform.ts';
 import { downloadFile, inviteUrl, nativeShare } from '../lib/share.ts';
 import { useStore, type ClientMessage } from '../lib/store.ts';
+import { fromKey, translationOf } from '../lib/translate.ts';
 import { Icon } from './icons.tsx';
 import { Avatar, Menu, useMenu } from './ui.tsx';
 
@@ -331,6 +332,15 @@ export const MessageRow = memo(function MessageRow({ m, chat, mine, showAuthor, 
   const patchMessage = useStore((s) => s.patchMessage);
   const press = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(press.current), []);
+  // A message written in another language is shown in the reader's; the original stays one tap away.
+  const translation = translationOf(
+    useStore((s) => s.tr[m.id]),
+    m.text,
+    lang,
+  );
+  const [showOriginal, setShowOriginal] = useState(false);
+  const translated = translation?.state === 'done' ? translation.text : null;
+  const fromNote = fromKey(translation?.from);
 
   if (m.type === 'system') {
     return (
@@ -406,8 +416,20 @@ export const MessageRow = memo(function MessageRow({ m, chat, mine, showAuthor, 
               )}
               {m.text && m.type !== 'event' && (
                 <div className="text" dir="auto">
-                  {richText(m.text)}
+                  {richText(translated && !showOriginal ? translated : m.text)}
                 </div>
+              )}
+              {translated ? (
+                <button type="button" className="tr-note" onClick={() => setShowOriginal((v) => !v)}>
+                  <Icon name="globe" size={12} />
+                  {showOriginal ? t('tr_show_translation') : `${t(fromNote ?? 'tr_translated')} · ${t('tr_show_original')}`}
+                </button>
+              ) : (
+                translation?.state === 'pending' && (
+                  <span className="tr-note pending">
+                    <Icon name="globe" size={12} /> {t('tr_pending')}
+                  </span>
+                )
               )}
             </>
           )}

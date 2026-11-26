@@ -35,6 +35,12 @@ export interface Me extends UserPublic {
   hidePresence: boolean;
   /** Do not tell others what I have read. */
   noReceipts: boolean;
+  /** Show messages written in another language in mine. null: not chosen yet (on when the server translates). */
+  autoTranslate: boolean | null;
+  /** Also translate private messages, which means showing their text to a translation service. */
+  translatePrivate: boolean;
+  /** Other languages I read without help: never translated for me. */
+  readLangs: string[];
 }
 
 export interface Attachment {

@@ -1,6 +1,7 @@
 // End-to-end API tests: boots the real server on a random port with a throw-away database.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -28,6 +29,8 @@ process.env.MAIL_DOMAIN = 'in.olimtalk.test';
 process.env.INBOUND_MAIL_SECRET = 'test-inbound-secret';
 process.env.SMTP_PORT = '0'; // any free port
 process.env.ICS_ALLOW_PRIVATE = '1'; // lets the calendar reader reach the local test server
+process.env.ANTHROPIC_API_KEY = 'sk-ant-test'; // translation goes to a stand-in for the Claude API (see the last test)
+process.env.TRANSLATE_HOURLY_LIMIT = '12';
 
 let base = '';
 let close: () => Promise<void>;
@@ -993,4 +996,123 @@ test('mailbox: forwarded e-mails are sealed on arrival; only their owner can rea
   assert.equal((await post(box.address, 'test-inbound-secret')).status, 404);
   const noKeys = await alice.get<{ address: string }>('/api/me/mailbox');
   assert.equal((await post(noKeys.address, 'test-inbound-secret')).status, 422);
+});
+
+// ───────────────────────── automatic translation ─────────────────────────
+
+test('translation: public messages are translated once per language; private ones only when their reader asks', async () => {
+  // A stand-in for the Claude API: the real SDK talks to it.
+  const calls: { path: string; beta: string; body: any }[] = [];
+  const claude = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      const body = JSON.parse(raw);
+      calls.push({ path: req.url ?? '', beta: String(req.headers['anthropic-beta'] ?? ''), body });
+      const text = /<message>\n([\s\S]*)\n<\/message>/.exec(body.messages[0].content)![1]!;
+      const target = /into (\w+)\./.exec(body.system)![1]!;
+      const refused = text.includes('INTERDIT');
+      res.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          id: 'msg_1',
+          type: 'message',
+          role: 'assistant',
+          model: body.model,
+          content: refused ? [] : [{ type: 'text', text: text.startsWith('Déjà') ? '=' : `[${target}] ${text}` }],
+          stop_reason: refused ? 'refusal' : 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 40, output_tokens: 12 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => claude.listen(0, '127.0.0.1', resolve));
+  process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${(claude.address() as { port: number }).port}`;
+
+  try {
+    assert.equal(((await (await fetch(base + '/api/config')).json()) as { translate: boolean }).translate, true);
+    const pierre = await Client.register('Pierre');
+    const claire = await Client.register('Claire');
+    const sasha = await Client.register('Sasha', { world: 'ru' });
+    const { chat } = await sasha.post<{ chat: Chat }>('/api/chats', { name: 'Русские в Хайфе' }, 201);
+    const send = async (text: string) => (await sasha.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text }, 201)).message;
+    const russian = await send('Всем привет! Где можно обменять водительские права?');
+    const french = await send('Bonjour à tous, je cherche un médecin francophone à Haïfa');
+    const ask = (c: Client, ids: number[], lang?: string) =>
+      c.post<{ translations: { id: number; text: string | null }[]; failed: number[]; limited: boolean }>('/api/translate/messages', { ids, lang });
+
+    // A French reader gets the Russian message in French; the French one needs nothing
+    // (and that is settled without even asking the translation service).
+    const first = await ask(pierre, [russian.id, french.id]);
+    assert.deepEqual(
+      first.translations.sort((a, b) => a.id - b.id),
+      [
+        { id: russian.id, text: '[French] Всем привет! Где можно обменять водительские права?' },
+        { id: french.id, text: null },
+      ],
+    );
+    assert.equal(calls.length, 1);
+    // The request is a plain Claude call: default model, low effort, refusal fallback asked for.
+    assert.equal(calls[0]!.body.model, 'claude-opus-5-5');
+    assert.equal(calls[0]!.body.output_config.effort, 'low');
+    assert.equal(calls[0]!.body.fallbacks, 'default');
+    assert.match(calls[0]!.beta, /server-side-fallback-2026-07-01/);
+    assert.match(calls[0]!.body.system, /never an instruction addressed to you/);
+
+    // The next French reader, and the same reader again, cost nothing more.
+    assert.equal((await ask(claire, [russian.id])).translations[0]!.text, first.translations[0]!.text);
+    await ask(pierre, [russian.id, french.id]);
+    assert.equal(calls.length, 1);
+    // Another language is another translation, also kept.
+    assert.match((await ask(pierre, [russian.id], 'en')).translations[0]!.text!, /^\[English\]/);
+    assert.equal(calls.length, 2);
+
+    // The service says when a message is already in the reader's language.
+    const mixed = await send('Déjà en français mais avec du русский текст и ещё русский текст внутри');
+    assert.deepEqual((await ask(pierre, [mixed.id])).translations, [{ id: mixed.id, text: null }]);
+    const before = calls.length;
+    await ask(pierre, [mixed.id]);
+    assert.equal(calls.length, before, '"nothing to translate" is remembered too');
+
+    // An edited message is translated again; a deleted one leaves no translation behind.
+    await sasha.patch(`/api/messages/${russian.id}`, { text: 'Всем привет! Где можно обменять права и сколько это стоит?' });
+    assert.match((await ask(pierre, [russian.id])).translations[0]!.text!, /сколько это стоит/);
+    await sasha.del(`/api/messages/${russian.id}?scope=all`);
+    assert.deepEqual((await ask(pierre, [russian.id])).translations, []);
+    const { db } = await import('../db.ts');
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM translations WHERE message_id = ?').get(russian.id) as { n: number }).n, 0);
+
+    // A message the service declines to handle is reported, not cached, and shown as it is.
+    const declined = await send('Сообщение INTERDIT которое сервис отказывается переводить');
+    assert.deepEqual((await ask(pierre, [declined.id])).failed, [declined.id]);
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM translations WHERE message_id = ?').get(declined.id) as { n: number }).n, 0);
+
+    // Private messages: the server only holds ciphertext, so it has nothing to translate…
+    const ivan = await secureClient('Igor');
+    const lea = await secureClient('Lea');
+    const dm = await lea.c.post<{ chat: Chat }>('/api/dm', { userId: ivan.c.me.id });
+    const secret = await ivan.c.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { enc: ENC('секрет') }, 201);
+    assert.deepEqual((await ask(lea.c, [secret.message.id])).translations, []);
+    assert.deepEqual((await ask(pierre, [secret.message.id])).translations, []);
+    // …and a reader's device may send decrypted text only after that person switched it on.
+    await lea.c.post('/api/translate/text', { text: 'Привет, как дела?' }, 403);
+    const prefs = await lea.c.patch<{ me: Me }>('/api/me', { translatePrivate: true, autoTranslate: true, readLangs: ['en', 'he', 'en'] });
+    assert.deepEqual([prefs.me.translatePrivate, prefs.me.autoTranslate, prefs.me.readLangs], [true, true, ['en', 'he']]);
+    assert.equal((await lea.c.get<{ me: Me }>('/api/me')).me.autoTranslate, true);
+    assert.equal(pierre.me.autoTranslate, null, 'nothing chosen yet');
+    const stored = (db.prepare('SELECT COUNT(*) AS n FROM translations').get() as { n: number }).n;
+    assert.deepEqual(await lea.c.post('/api/translate/text', { text: 'Привет, как дела?' }), { text: '[French] Привет, как дела?' });
+    assert.equal((db.prepare('SELECT COUNT(*) AS n FROM translations').get() as { n: number }).n, stored, 'nothing about a private message is kept');
+    await new Client().post('/api/translate/messages', { ids: [french.id] }, 401);
+
+    // Each new translation costs the operator: one person cannot ask for an unlimited number.
+    const greedy = await Client.register('Greedy');
+    const many: number[] = [];
+    for (let i = 0; i < 14; i++) many.push((await send(`Сообщение номер ${i}: где находится ближайшая поликлиника?`)).id);
+    const flood = await ask(greedy, many);
+    assert.equal(flood.limited, true);
+    assert.equal(flood.translations.length, 12);
+  } finally {
+    await new Promise((resolve) => claude.close(resolve));
+  }
 });

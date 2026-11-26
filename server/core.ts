@@ -67,6 +67,9 @@ export function toMe(u: UserRow): Me {
     blocked,
     hidePresence: !!u.hide_presence,
     noReceipts: !!u.no_receipts,
+    autoTranslate: u.auto_translate == null ? null : !!u.auto_translate,
+    translatePrivate: !!u.translate_private,
+    readLangs: u.read_langs ? u.read_langs.split(',') : [],
   };
 }
 
@@ -610,6 +613,7 @@ export function eraseMessage(row: MessageRow) {
   db.prepare('DELETE FROM reactions WHERE message_id = ?').run(row.id);
   db.prepare('DELETE FROM poll_votes WHERE message_id = ?').run(row.id);
   db.prepare('DELETE FROM stars WHERE message_id = ?').run(row.id);
+  db.prepare('DELETE FROM translations WHERE message_id = ?').run(row.id);
   removeOrphanUploads(attachmentUrls([{ json: row.attachment }]));
 }
 

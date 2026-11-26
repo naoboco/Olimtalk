@@ -8,6 +8,7 @@ import { UnlockDialog, profileKey } from '../components/dialogs.tsx';
 import { Icon, type IconName } from '../components/icons.tsx';
 import { previewLine } from '../components/Message.tsx';
 import { DevicesDialog, ResetEncryptionDialog } from '../components/Security.tsx';
+import { TranslationSettings } from '../components/Translate.tsx';
 import { Avatar, Empty, Field, Modal, Spinner } from '../components/ui.tsx';
 import { PROVIDERS } from '../lib/ai/index.ts';
 import { ApiError, api } from '../lib/api.ts';
@@ -481,6 +482,8 @@ export function ProfilePage() {
             <p className="muted small">{t('my_world_hint')}</p>
             <WorldPicker value={me.world} onChange={(w) => void switchWorld(w).catch(error)} />
           </div>
+
+          <TranslationSettings />
 
           <div className="card">
             <div className="section-title">{t('appearance')}</div>

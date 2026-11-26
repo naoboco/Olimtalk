@@ -14,6 +14,7 @@ import { router as communityRoutes } from './routes/community.ts';
 import { router as connectRoutes } from './routes/connect.ts';
 import { router as messageRoutes } from './routes/messages.ts';
 import { router as miscRoutes } from './routes/misc.ts';
+import { router as translateRoutes } from './routes/translate.ts';
 import { seed } from './seed.ts';
 import { startSmtp } from './smtp.ts';
 import { HttpError, escapeHtml } from './util.ts';
@@ -94,7 +95,7 @@ const api = express.Router();
 api.use(loadUser);
 api.get('/health', (_req, res) => res.json({ ok: true }));
 api.get('/config', (_req, res) => res.json(publicConfig()));
-api.use(authRoutes, chatRoutes, messageRoutes, communityRoutes, connectRoutes, miscRoutes);
+api.use(authRoutes, chatRoutes, messageRoutes, communityRoutes, connectRoutes, translateRoutes, miscRoutes);
 api.use((_req, _res, next) => next(new HttpError(404, 'not_found')));
 app.use('/api', api);
 

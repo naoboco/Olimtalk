@@ -3,6 +3,7 @@
 // user-generated content must publish their rules. The texts describe what this
 // software actually does; the operator's name and contact come from the environment.
 // They are a starting point: have them reviewed before opening to the public.
+import { translationEnabled, translationService } from './translate.ts';
 import { escapeHtml } from './util.ts';
 
 const OPERATOR = (process.env.LEGAL_OPERATOR || '').trim();
@@ -16,6 +17,8 @@ export function publicConfig() {
     contact: CONTACT || null,
     // Whether people can get a private forwarding address for their e-mails.
     mail: !!(process.env.MAIL_DOMAIN || '').trim(),
+    // Whether this server translates messages into the reader's language.
+    translate: translationEnabled(),
   };
 }
 
@@ -55,7 +58,11 @@ function page(title: string, body: string): string {
 <header><img src="/logo.svg" alt=""><a href="/">OlimTalk</a></header>
 <nav><a href="/privacy">Confidentialité · Privacy</a><a href="/terms">Conditions · Terms</a></nav>
 ${incomplete}
-${body.replaceAll('{operator}', operator).replaceAll('{contact}', contact)}
+${body
+  .replaceAll('{operator}', operator)
+  .replaceAll('{contact}', contact)
+  .replaceAll('{translator_fr}', escapeHtml(translationService() ?? 'non activé sur ce serveur'))
+  .replaceAll('{translator_en}', escapeHtml(translationService() ?? 'not enabled on this server'))}
 </main></body></html>`;
 }
 
@@ -109,6 +116,15 @@ nous n'utilisons aucun traceur publicitaire.</p>
       puis chiffrés avec votre clé avant d'être enregistrés. Une fois enregistrés, nous ne pouvons plus les lire ; nous ne
       conservons en clair que leur date de réception et leur taille.</li>
 </ul>
+
+<h2>Traduction automatique</h2>
+<p>Pour afficher dans votre langue un message écrit dans une autre, le texte des <strong>messages publics</strong> est transmis à
+un service de traduction (actuellement : {translator_fr}), sans le nom de son auteur. La traduction est conservée avec le message
+et effacée avec lui.</p>
+<p>Vos <strong>messages privés ne sont jamais traduits de cette façon</strong>. Ils ne le sont que si vous l'activez
+(Profil → Traduction automatique) : par votre propre IA si vous en avez connecté une, sinon votre appareil envoie le texte des
+messages que vous recevez à ce service de traduction ; OlimTalk ne le conserve pas. Vous pouvez désactiver la traduction à
+tout moment.</p>
 
 <h2>Autorisations de l'application</h2>
 <p>Le micro, l'appareil photo et la photothèque ne sont utilisés que lorsque vous choisissez d'enregistrer un message vocal
@@ -178,6 +194,14 @@ users. We do not sell your data, we show no advertising and we use no advertisin
       your key before being stored. Once stored, we can no longer read them; we only keep their arrival date and size in the
       clear.</li>
 </ul>
+
+<h2>Automatic translation</h2>
+<p>To show you a message written in another language in yours, the text of <strong>public messages</strong> is sent to a
+translation service (currently: {translator_en}), without its author's name. The translation is kept with the message and
+erased with it.</p>
+<p>Your <strong>private messages are never translated that way</strong>. They are translated only if you turn it on
+(Profile → Automatic translation): by your own AI if you connected one, otherwise your device sends the text of the messages
+you receive to that translation service; OlimTalk does not keep it. You can turn translation off at any time.</p>
 
 <h2>App permissions</h2>
 <p>The microphone, camera and photo library are used only when you choose to record a voice message or to send a photo,
