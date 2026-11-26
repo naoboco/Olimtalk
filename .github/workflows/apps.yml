@@ -1,0 +1,90 @@
+name: Mobile apps
+
+# Compiles the Android and iOS apps on every change that affects them, and keeps the
+# Android build as a downloadable file (Actions → the run → Artifacts) that can be
+# installed on a phone for testing.
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - 'ios/**'
+      - 'web/**'
+      - 'shared/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/apps.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: apps-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Address of the OlimTalk server the apps talk to.
+  # Set it once in: Settings → Secrets and variables → Actions → Variables → OLIMTALK_SERVER_URL
+  VITE_API_URL: ${{ vars.OLIMTALK_SERVER_URL || 'https://olimtalk.invalid' }}
+
+jobs:
+  tests:
+    name: Server and interface tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  android:
+    name: Android app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - name: Warn when no server address is configured
+        if: ${{ vars.OLIMTALK_SERVER_URL == '' }}
+        run: echo "::warning::OLIMTALK_SERVER_URL is not set. The app compiles but cannot reach a server. Add the variable in the repository settings."
+      - run: npm ci
+      - name: Build the interface and copy it into the native projects
+        run: npm run build:app
+      - name: Compile the Android app
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: olimtalk-android-test-build
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the interface and copy it into the native projects
+        run: npm run build:app
+      - name: Compile the iOS app (simulator build, no signing)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -n 40
+          exit ${PIPESTATUS[0]}
