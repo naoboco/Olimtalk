@@ -3,8 +3,43 @@ import { createPortal } from 'react-dom';
 import { WORLD_META } from '../../../shared/data.ts';
 import type { Chat, Lang } from '../../../shared/types.ts';
 import { colorFor, initials } from '../lib/format.tsx';
+import { asset } from '../lib/platform.ts';
 import { useStore } from '../lib/store.ts';
 import { Icon, type IconName } from './icons.tsx';
+
+// ───────────── dismissing overlays ─────────────
+// Dialogs, menus and panels register here while they are open. Escape on a keyboard
+// and the back button on Android both close only the topmost one.
+
+const dismissStack: (() => void)[] = [];
+
+/** Close the topmost open overlay. Returns false when there was nothing to close. */
+export function dismissTop(): boolean {
+  const top = dismissStack[dismissStack.length - 1];
+  if (!top) return false;
+  top();
+  return true;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && dismissTop()) e.preventDefault();
+  });
+}
+
+export function useDismiss(onClose: () => void, active = true) {
+  const latest = useRef(onClose);
+  latest.current = onClose;
+  useEffect(() => {
+    if (!active) return;
+    const entry = () => latest.current();
+    dismissStack.push(entry);
+    return () => {
+      const i = dismissStack.indexOf(entry);
+      if (i >= 0) dismissStack.splice(i, 1);
+    };
+  }, [active]);
+}
 
 // ───────────── avatars ─────────────
 
@@ -31,7 +66,7 @@ export function Avatar({
   if (!src) style.background = emoji ? `color-mix(in srgb, ${colorFor(id)} 16%, var(--surface))` : colorFor(id);
   const body = (
     <span className={`avatar${ring ? ` ring ring-${ring}` : ''}`} style={style}>
-      {src ? <img src={src} alt="" loading="lazy" /> : <span className={emoji ? 'avatar-emoji' : 'avatar-initials'}>{emoji || initials(name)}</span>}
+      {src ? <img src={asset(src)} alt="" loading="lazy" /> : <span className={emoji ? 'avatar-emoji' : 'avatar-initials'}>{emoji || initials(name)}</span>}
       {online && <span className="avatar-online" />}
     </span>
   );
@@ -123,11 +158,7 @@ export function Modal({
   wide?: boolean;
   className?: string;
 }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useDismiss(onClose);
   return createPortal(
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal ${wide ? 'wide' : ''} ${className}`} role="dialog" aria-modal="true">
@@ -169,11 +200,7 @@ export function Menu({ x, y, items, onClose, header }: { x: number; y: number; i
       top: Math.max(pad, Math.min(y, window.innerHeight - height - pad)),
     });
   }, [x, y]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useDismiss(onClose);
   return createPortal(
     <div className="menu-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()} onContextMenu={(e) => e.preventDefault()}>
       <div ref={ref} className="menu" role="menu" style={pos ? { left: pos.left, top: pos.top } : { left: x, top: y, visibility: 'hidden' }}>

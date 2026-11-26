@@ -63,6 +63,21 @@ export function tokenFromCookieHeader(header: string | undefined): string | unde
   return parseCookie(header)[COOKIE];
 }
 
+/** The session token of a request: `Authorization: Bearer …` (mobile apps) or the cookie (web). */
+export function tokenFromRequest(req: Request): string | undefined {
+  const header = req.headers.authorization;
+  if (header && /^Bearer\s+\S/i.test(header)) return header.replace(/^Bearer\s+/i, '').trim();
+  return tokenFromCookieHeader(req.headers.cookie);
+}
+
+/**
+ * The native apps load their interface from the device, not from this server,
+ * so cookies do not apply to them: they ask for the token itself.
+ */
+export function wantsToken(req: Request): boolean {
+  return req.get('x-olimtalk-client') === 'app';
+}
+
 export function setSessionCookie(req: Request, res: Response, token: string) {
   res.setHeader(
     'Set-Cookie',
@@ -90,7 +105,7 @@ declare module 'express-serve-static-core' {
 
 /** Attach req.user when a valid session cookie is present. Never rejects. */
 export function loadUser(req: Request, _res: Response, next: NextFunction) {
-  req.user = userFromToken(tokenFromCookieHeader(req.headers.cookie));
+  req.user = userFromToken(tokenFromRequest(req));
   next();
 }
 

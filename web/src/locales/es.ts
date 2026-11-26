@@ -346,6 +346,14 @@ export const es: Dict = {
   change_password: 'Cambiar contraseña',
   current_password: 'Contraseña actual',
   new_password: 'Nueva contraseña',
+  share_card: 'Compartir imagen',
+  delete_account: 'Eliminar mi cuenta',
+  delete_account_hint: 'Definitivo',
+  delete_account_text: 'Tu cuenta, tus mensajes, tus historias y tus archivos se eliminarán de forma permanente. Esta acción no se puede deshacer.',
+  delete_account_confirm: 'Eliminar definitivamente',
+  account_deleted: 'Tu cuenta fue eliminada.',
+  boot_offline: 'No se pudo conectar con OlimTalk. Revisa tu conexión.',
+  boot_misconfigured: 'Esta versión de la aplicación no tiene dirección de servidor. Contacta al equipo de OlimTalk.',
   footer_tagline: 'hecho con 💙 para los olim',
 
   // errors

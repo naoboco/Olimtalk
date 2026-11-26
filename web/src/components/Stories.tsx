@@ -5,11 +5,12 @@ import { api } from '../lib/api.ts';
 import { timeAgo } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
 import { uploadFile } from '../lib/media.ts';
-import { canShareFiles, nativeShare } from '../lib/share.ts';
+import { PUBLIC_ORIGIN, asset } from '../lib/platform.ts';
+import { nativeShare } from '../lib/share.ts';
 import { useStore } from '../lib/store.ts';
 import { ReportDialog } from './dialogs.tsx';
 import { Icon } from './icons.tsx';
-import { Avatar, IconButton, Modal, Spinner } from './ui.tsx';
+import { Avatar, IconButton, Modal, Spinner, useDismiss } from './ui.tsx';
 
 const BACKGROUNDS = [
   'linear-gradient(135deg,#2F6BFF,#12A594)',
@@ -205,13 +206,14 @@ export function StoryViewer() {
   useEffect(() => {
     if (!viewer) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
       if (e.key === 'ArrowRight') go(1);
       if (e.key === 'ArrowLeft') go(-1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  useDismiss(close, !!viewer);
 
   if (!viewer || !me) return null;
   if (!group || !story) {
@@ -258,12 +260,12 @@ export function StoryViewer() {
 
   const shareOut = async () => {
     setPaused(true);
-    const payload = { title: group.user.name, text: story.text || t('story_share_text', { name: group.user.name }), url: window.location.origin };
+    const payload = { title: group.user.name, text: story.text || t('story_share_text', { name: group.user.name }), url: PUBLIC_ORIGIN };
     try {
       if (story.media) {
-        const blob = await fetch(story.media.url).then((r) => r.blob());
+        const blob = await fetch(asset(story.media.url)).then((r) => r.blob());
         const file = new File([blob], story.media.name || 'story', { type: blob.type });
-        if (canShareFiles(file) && (await nativeShare(payload, file))) return;
+        if (await nativeShare(payload, file)) return;
       }
       if (!(await nativeShare(payload))) useStore.getState().openShare({ ...payload, emoji: '✨', cta: t('share_cta_app') });
     } finally {
@@ -296,8 +298,8 @@ export function StoryViewer() {
           <IconButton icon="x" label={t('close')} onClick={close} />
         </header>
 
-        {story.media?.kind === 'image' && <img className="story-media" src={story.media.url} alt="" />}
-        {story.media?.kind === 'video' && <video className="story-media" src={story.media.url} autoPlay playsInline muted={false} />}
+        {story.media?.kind === 'image' && <img className="story-media" src={asset(story.media.url)} alt="" />}
+        {story.media?.kind === 'video' && <video className="story-media" src={asset(story.media.url)} autoPlay playsInline muted={false} />}
         {story.text && (
           <div className={`story-text ${story.media ? 'caption' : ''} ${story.text.length > 160 ? 'long' : ''}`} dir="auto">
             {story.text}

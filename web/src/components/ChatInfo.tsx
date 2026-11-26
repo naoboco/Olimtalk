@@ -5,12 +5,13 @@ import type { Chat, Member, Message } from '../../../shared/types.ts';
 import { api } from '../lib/api.ts';
 import { compactNumber, lastSeen, richText } from '../lib/format.tsx';
 import { useT } from '../lib/i18n.ts';
+import { asset } from '../lib/platform.ts';
 import { copyText, inviteUrl } from '../lib/share.ts';
 import { useStore } from '../lib/store.ts';
 import { Confirm, GroupDialog, ReportDialog, categoryKey, profileKey } from './dialogs.tsx';
 import { Icon } from './icons.tsx';
 import { previewLine } from './Message.tsx';
-import { Avatar, ChatAvatar, IconButton, Menu, Spinner, type MenuItem } from './ui.tsx';
+import { Avatar, ChatAvatar, IconButton, Menu, Spinner, useDismiss, type MenuItem } from './ui.tsx';
 
 export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () => void; onJump: (messageId: number) => void }) {
   const t = useT();
@@ -29,6 +30,7 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
   const [confirm, setConfirm] = useState<'leave' | 'delete' | 'reset' | null>(null);
   const [memberMenu, setMemberMenu] = useState<{ m: Member; x: number; y: number } | null>(null);
 
+  useDismiss(onClose);
   const group = chat.type === 'group';
   const isAdmin = chat.role === 'owner' || chat.role === 'admin';
   const link = chat.inviteCode ? inviteUrl(chat.inviteCode) : '';
@@ -271,7 +273,11 @@ export function ChatInfo({ chat, onClose, onJump }: { chat: Chat; onClose: () =>
             <div className="media-grid">
               {images.slice(0, 12).map((m) => (
                 <button key={m.id} type="button" onClick={() => openLightbox(m.attachment)}>
-                  {m.attachment!.kind === 'image' ? <img src={m.attachment!.url} alt="" loading="lazy" /> : <video src={m.attachment!.url} preload="metadata" muted />}
+                  {m.attachment!.kind === 'image' ? (
+                    <img src={asset(m.attachment!.url)} alt="" loading="lazy" />
+                  ) : (
+                    <video src={asset(m.attachment!.url)} preload="metadata" muted />
+                  )}
                 </button>
               ))}
             </div>

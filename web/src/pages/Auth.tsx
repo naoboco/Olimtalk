@@ -31,7 +31,7 @@ export function AuthPage() {
   const location = useLocation();
   const lang = useStore((s) => s.lang);
   const setLang = useStore((s) => s.setLang);
-  const setMe = useStore((s) => s.setMe);
+  const signIn = useStore((s) => s.signIn);
   const next = (location.state as { next?: string } | null)?.next || '/chats';
 
   const [mode, setMode] = useState<'register' | 'login'>((location.state as { mode?: 'login' } | null)?.mode ?? 'register');
@@ -56,8 +56,7 @@ export function AuthPage() {
     setBusy(true);
     setErr(null);
     try {
-      const r = await api.post<{ me: Me }>('/auth/login', { email, password });
-      setMe(r.me);
+      await signIn(await api.post<{ me: Me; token?: string }>('/auth/login', { email, password }));
       navigate(next, { replace: true });
     } catch (e) {
       fail(e);
@@ -70,16 +69,17 @@ export function AuthPage() {
     setBusy(true);
     setErr(null);
     try {
-      const r = await api.post<{ me: Me }>('/auth/register', {
-        email,
-        password,
-        name,
-        world: lang,
-        profile,
-        city: city || null,
-        aliyahYear: year ? Number(year) : null,
-      });
-      setMe(r.me);
+      await signIn(
+        await api.post<{ me: Me; token?: string }>('/auth/register', {
+          email,
+          password,
+          name,
+          world: lang,
+          profile,
+          city: city || null,
+          aliyahYear: year ? Number(year) : null,
+        }),
+      );
       navigate(next, { replace: true });
     } catch (e) {
       fail(e);

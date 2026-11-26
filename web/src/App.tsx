@@ -1,11 +1,13 @@
 import { Suspense, lazy, useEffect, useMemo } from 'react';
-import { BrowserRouter, NavLink, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, NavLink, Navigate, Outlet, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Lightbox, UserProfileModal } from './components/dialogs.tsx';
 import { Icon, Logo, type IconName } from './components/icons.tsx';
 import { ShareSheet } from './components/ShareSheet.tsx';
 import { StoryViewer } from './components/Stories.tsx';
 import { Avatar, Spinner, Toasts } from './components/ui.tsx';
 import { useT, type Key } from './lib/i18n.ts';
+import { hideSplash, initNative, syncSystemBars } from './lib/native.ts';
+import { MISCONFIGURED } from './lib/platform.ts';
 import { useStore } from './lib/store.ts';
 import { AuthPage } from './pages/Auth.tsx';
 import { ChatsPage } from './pages/Chats.tsx';
@@ -90,9 +92,36 @@ function Welcome() {
   return <AuthPage />;
 }
 
+/** Connects the router to the phone: back button, invitation links, status bar. */
+function NativeBridge() {
+  const navigate = useNavigate();
+  const theme = useStore((s) => s.theme);
+  useEffect(() => initNative((path, options) => void navigate(path, options)), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => syncSystemBars(), [theme]);
+  return null;
+}
+
 export function App() {
+  const t = useT();
   const ready = useStore((s) => s.ready);
-  useEffect(() => void useStore.getState().init(), []);
+  const bootError = useStore((s) => s.bootError);
+  useEffect(() => void (MISCONFIGURED || useStore.getState().init()), []);
+  useEffect(() => {
+    if (ready || bootError || MISCONFIGURED) hideSplash();
+  }, [ready, bootError]);
+  if (MISCONFIGURED || bootError) {
+    return (
+      <div className="splash">
+        <Logo size={72} />
+        <p>{MISCONFIGURED ? t('boot_misconfigured') : t('boot_offline')}</p>
+        {!MISCONFIGURED && (
+          <button type="button" className="btn primary" onClick={() => void useStore.getState().init()}>
+            {t('retry')}
+          </button>
+        )}
+      </div>
+    );
+  }
   if (!ready) {
     return (
       <div className="splash">
@@ -103,6 +132,7 @@ export function App() {
   }
   return (
     <BrowserRouter>
+      <NativeBridge />
       <Routes>
         <Route path="/welcome" element={<Welcome />} />
         <Route path="/join/:code" element={<JoinPage />} />

@@ -15,5 +15,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["server", "shared", "web/src", "web/vite.config.ts"]
+  "include": ["server", "shared", "web/src", "web/vite.config.ts", "capacitor.config.ts"]
 }

@@ -16,6 +16,7 @@ import type {
 } from '../../../shared/types.ts';
 import { ApiError, api } from './api.ts';
 import { detectLang, translate, type Key } from './i18n.ts';
+import { API_ORIGIN, TOKEN_MODE, getToken, loadToken, saveToken } from './platform.ts';
 import type { SharePayload } from './share.ts';
 
 export type ClientMessage = Message & { pending?: boolean; failed?: boolean };
@@ -39,6 +40,8 @@ export type Theme = 'system' | 'light' | 'dark';
 interface State {
   me: Me | null;
   ready: boolean;
+  /** The apps: a session exists but the server could not be reached at start-up. */
+  bootError: boolean;
   lang: Lang;
   theme: Theme;
   connected: boolean;
@@ -56,7 +59,12 @@ interface State {
   lightbox: Attachment | null;
 
   init: () => Promise<void>;
+  /** Start a session from a login / sign-up response (the apps also receive a token). */
+  signIn: (session: { me: Me; token?: string }) => Promise<void>;
   setMe: (me: Me | null) => void;
+  deleteAccount: (password: string) => Promise<void>;
+  /** Catch up after the app comes back to the foreground. */
+  resume: () => void;
   setLang: (lang: Lang) => void;
   setTheme: (theme: Theme) => void;
   switchWorld: (world: World) => Promise<void>;
@@ -130,6 +138,7 @@ function toPreview(m: Message): Chat['lastMessage'] {
 export const useStore = create<State>((set, get) => ({
   me: null,
   ready: false,
+  bootError: false,
   lang: detectLang(),
   theme: loadTheme(),
   connected: false,
@@ -147,13 +156,36 @@ export const useStore = create<State>((set, get) => ({
 
   async init() {
     applyTheme(get().theme);
+    await loadToken();
+    set({ bootError: false });
     try {
       const { me } = await api.get<{ me: Me | null }>('/me');
       get().setMe(me);
     } catch {
-      /* offline: stay logged out */
+      // Unreachable server. With a saved session (the apps), showing the sign-in screen
+      // would look like a logout: offer to retry instead.
+      if (TOKEN_MODE && getToken()) set({ bootError: true });
     }
     set({ ready: true });
+  },
+
+  async signIn(session) {
+    if (session.token) await saveToken(session.token);
+    get().setMe(session.me);
+  },
+
+  async deleteAccount(password) {
+    await api.post('/me/delete', { password });
+    get().setMe(null);
+  },
+
+  resume() {
+    if (!get().me) return;
+    if (socket && !socket.connected) socket.connect();
+    void get().loadChats().catch(() => undefined);
+    void get().loadStories();
+    const active = get().activeChatId;
+    if (active != null && !get().msgs[active]?.hasNewer) void get().loadMessages(active, 'latest');
   },
 
   setMe(me) {
@@ -172,6 +204,7 @@ export const useStore = create<State>((set, get) => ({
       void get().loadChats();
       void get().loadStories();
     }
+    if (!me) void saveToken(null);
     if (!me && prev) {
       socket?.close();
       socket = null;
@@ -479,7 +512,13 @@ function notify(chat: Chat, m: Message) {
 
 function connect() {
   if (socket) return;
-  socket = io({ path: '/socket.io', transports: ['websocket', 'polling'] });
+  const options = {
+    path: '/socket.io',
+    transports: ['websocket', 'polling'],
+    // The apps authenticate the realtime channel with their session token.
+    auth: (cb: (data: object) => void) => cb(TOKEN_MODE && getToken() ? { token: getToken() } : {}),
+  };
+  socket = API_ORIGIN ? io(API_ORIGIN, options) : io(options);
   const store = useStore;
 
   socket.on('connect', () => {

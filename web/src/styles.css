@@ -26,6 +26,10 @@
   --radius: 14px;
   --nav-w: 94px;
   --tab-h: 62px;
+  /* Space taken by the phone's status bar / notch and gesture bar. The Android shell
+     publishes --safe-area-inset-*; iOS and browsers provide env(). */
+  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   color-scheme: light;
 }
 
@@ -281,8 +285,8 @@ video {
   align-items: center;
   gap: 10px;
   flex: none;
-  min-height: 60px;
-  padding: 8px 14px;
+  min-height: calc(60px + var(--sat));
+  padding: calc(8px + var(--sat)) 14px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -347,6 +351,9 @@ video {
   align-items: center;
   justify-content: center;
   gap: 24px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-2);
 }
 
 /* ───────── primitives ───────── */
@@ -955,7 +962,7 @@ textarea:focus {
 .toasts {
   position: fixed;
   z-index: 90;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  bottom: calc(24px + var(--sab));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -1193,8 +1200,8 @@ textarea:focus {
   align-items: center;
   gap: 6px;
   flex: none;
-  min-height: 60px;
-  padding: 8px 10px;
+  min-height: calc(60px + var(--sat));
+  padding: calc(8px + var(--sat)) 10px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -1274,7 +1281,7 @@ textarea:focus {
 .search-results {
   position: absolute;
   z-index: 5;
-  top: 60px;
+  top: calc(60px + var(--sat));
   left: 0;
   right: 0;
   max-height: 60%;
@@ -1838,7 +1845,7 @@ textarea:focus {
   flex: none;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--sab);
 }
 .composer {
   display: flex;
@@ -1852,7 +1859,7 @@ textarea:focus {
   flex: none;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  padding-bottom: calc(8px + var(--sab));
 }
 .composer textarea {
   flex: 1;
@@ -1993,7 +2000,7 @@ textarea:focus {
   justify-content: center;
   gap: 14px;
   flex: none;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(12px + var(--sab));
   background: var(--surface);
   border-top: 1px solid var(--border);
   color: var(--text-2);
@@ -2308,7 +2315,7 @@ button.member:hover {
   z-index: 80;
   display: grid;
   place-items: center;
-  padding: 56px 12px 12px;
+  padding: calc(56px + var(--sat)) 12px calc(12px + var(--sab));
   background: rgba(0, 0, 0, 0.92);
 }
 .lightbox img,
@@ -2319,7 +2326,7 @@ button.member:hover {
 }
 .lightbox-bar {
   position: absolute;
-  top: 8px;
+  top: calc(8px + var(--sat));
   inset-inline-end: 8px;
   display: flex;
   gap: 4px;
@@ -2498,7 +2505,7 @@ button.member:hover {
 .story-bars {
   position: absolute;
   z-index: 3;
-  top: calc(8px + env(safe-area-inset-top));
+  top: calc(8px + var(--sat));
   inset-inline: 10px;
   display: flex;
   gap: 4px;
@@ -2518,7 +2525,7 @@ button.member:hover {
 .story-head {
   position: absolute;
   z-index: 3;
-  top: calc(18px + env(safe-area-inset-top));
+  top: calc(18px + var(--sat));
   inset-inline: 10px;
   display: flex;
   align-items: center;
@@ -2591,7 +2598,7 @@ button.member:hover {
 .story-foot {
   position: absolute;
   z-index: 3;
-  bottom: calc(14px + env(safe-area-inset-bottom));
+  bottom: calc(14px + var(--sab));
   inset-inline: 12px;
   display: flex;
   justify-content: center;
@@ -2752,7 +2759,7 @@ button.member:hover {
   flex-direction: column;
   align-items: center;
   gap: 22px;
-  padding: 28px 16px 40px;
+  padding: calc(28px + var(--sat)) 16px calc(40px + var(--sab));
   background:
     radial-gradient(circle at 85% 0%, rgba(255, 197, 61, 0.5), transparent 40%),
     linear-gradient(160deg, #2f6bff 0%, #1b55d9 40%, #12a594 100%);
@@ -3199,7 +3206,7 @@ button.member:hover {
     flex-direction: row;
     justify-content: space-around;
     gap: 0;
-    padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+    padding: 4px 4px calc(4px + var(--sab));
     border-inline-end: 0;
     border-top: 1px solid var(--border);
   }
@@ -3245,7 +3252,7 @@ button.member:hover {
     grid-template-columns: minmax(0, 1fr);
   }
   .auth-hero {
-    padding: 28px 22px;
+    padding: calc(28px + var(--sat)) 22px 28px;
     gap: 12px;
   }
   .auth-hero h1 {
@@ -3258,7 +3265,7 @@ button.member:hover {
     display: none;
   }
   .auth-card {
-    padding: 22px 18px 32px;
+    padding: 22px 18px calc(32px + var(--sab));
     align-self: start;
   }
   .page-inner {
@@ -3284,7 +3291,7 @@ button.member:hover {
     width: 100%;
     max-height: 92dvh;
     border-radius: 22px 22px 0 0;
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--sab);
   }
   .step-body {
     padding-inline-start: 16px;
@@ -3299,4 +3306,21 @@ button.member:hover {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ───────── inside the iOS / Android apps ───────── */
+html.native {
+  /* An app does not select its own labels or bounce like a web page. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}
+html.native input,
+html.native textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+html.native .page-inner {
+  padding-bottom: calc(40px + var(--sab));
 }

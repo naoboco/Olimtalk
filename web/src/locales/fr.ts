@@ -345,6 +345,14 @@ export const fr = {
   change_password: 'Changer le mot de passe',
   current_password: 'Mot de passe actuel',
   new_password: 'Nouveau mot de passe',
+  share_card: "Partager l'image",
+  delete_account: 'Supprimer mon compte',
+  delete_account_hint: 'Définitif',
+  delete_account_text: 'Votre compte, vos messages, vos stories et vos fichiers seront supprimés définitivement. Cette action est irréversible.',
+  delete_account_confirm: 'Supprimer définitivement',
+  account_deleted: 'Votre compte a été supprimé.',
+  boot_offline: 'Impossible de joindre OlimTalk. Vérifiez votre connexion.',
+  boot_misconfigured: "Cette version de l'application n'a pas d'adresse de serveur. Contactez l'équipe OlimTalk.",
   footer_tagline: 'fait avec 💙 pour les olim',
 
   // errors

@@ -346,6 +346,14 @@ export const ru: Dict = {
   change_password: 'Сменить пароль',
   current_password: 'Текущий пароль',
   new_password: 'Новый пароль',
+  share_card: 'Поделиться картинкой',
+  delete_account: 'Удалить аккаунт',
+  delete_account_hint: 'Навсегда',
+  delete_account_text: 'Ваш аккаунт, сообщения, истории и файлы будут удалены навсегда. Это действие нельзя отменить.',
+  delete_account_confirm: 'Удалить навсегда',
+  account_deleted: 'Ваш аккаунт удалён.',
+  boot_offline: 'Не удаётся связаться с OlimTalk. Проверьте подключение.',
+  boot_misconfigured: 'В этой версии приложения не указан адрес сервера. Свяжитесь с командой OlimTalk.',
   footer_tagline: 'сделано с 💙 для олим',
 
   // errors

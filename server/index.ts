@@ -39,6 +39,28 @@ app.use(
     crossOriginEmbedderPolicy: false,
   }),
 );
+// The iOS and Android apps load their interface from the device, so their requests are
+// cross-origin. They authenticate with a bearer token, never with cookies, which is why
+// no "Allow-Credentials" header is sent here.
+const APP_ORIGINS = (process.env.CORS_ORIGINS || 'capacitor://localhost,ionic://localhost,https://localhost,http://localhost')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && APP_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-OlimTalk-Client');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Max-Age', '600');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+  }
+  next();
+});
 app.use(compression());
 app.use(express.json({ limit: '200kb' }));
 
@@ -156,7 +178,7 @@ const created = seed();
 if (created) console.log(`[olimtalk] seeded ${created} built-in groups and communities`);
 
 export const server = http.createServer(app);
-initRealtime(server);
+initRealtime(server, APP_ORIGINS);
 
 if (process.env.OLIMTALK_NO_LISTEN !== '1') {
   server.listen(PORT, () => console.log(`[olimtalk] listening on http://localhost:${PORT} (${PROD ? 'production' : 'development'})`));

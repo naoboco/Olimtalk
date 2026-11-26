@@ -57,15 +57,18 @@ function broadcastPresence(userId: number, isOn: boolean) {
 
 const typingLimit = rateLimiter(20, 10_000);
 
-export function initRealtime(server: HttpServer) {
+export function initRealtime(server: HttpServer, corsOrigins: string[] = []) {
   io = new Server(server, {
     path: '/socket.io',
     serveClient: false,
     maxHttpBufferSize: 1e5,
+    cors: corsOrigins.length ? { origin: corsOrigins } : undefined,
   });
 
   io.use((socket, next) => {
-    const user = userFromToken(tokenFromCookieHeader(socket.handshake.headers.cookie));
+    const auth = socket.handshake.auth as { token?: unknown } | undefined;
+    const token = typeof auth?.token === 'string' && auth.token ? auth.token : tokenFromCookieHeader(socket.handshake.headers.cookie);
+    const user = userFromToken(token);
     if (!user) return next(new Error('unauthorized'));
     socket.data.userId = user.id;
     socket.data.name = user.name;

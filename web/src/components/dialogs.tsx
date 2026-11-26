@@ -8,7 +8,8 @@ import { useT, type Key } from '../lib/i18n.ts';
 import { uploadFile } from '../lib/media.ts';
 import { useStore } from '../lib/store.ts';
 import { Icon } from './icons.tsx';
-import { Avatar, ChatAvatar, Field, GROUP_EMOJIS, Modal, Spinner } from './ui.tsx';
+import { asset } from '../lib/platform.ts';
+import { Avatar, ChatAvatar, Field, GROUP_EMOJIS, Modal, Spinner, useDismiss } from './ui.tsx';
 
 export const categoryKey = (c: ChatCategory) => `cat_${c}` as Key;
 export const profileKey = (p: string) => `profile_${p}` as Key;
@@ -629,17 +630,13 @@ export function UserProfileModal() {
 export function Lightbox() {
   const a = useStore((s) => s.lightbox);
   const open = useStore((s) => s.openLightbox);
-  useEffect(() => {
-    if (!a) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && open(null);
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [a, open]);
+  useDismiss(() => open(null), !!a);
   if (!a) return null;
+  const url = asset(a.url);
   return (
     <div className="lightbox" onClick={() => open(null)}>
       <div className="lightbox-bar" onClick={(e) => e.stopPropagation()}>
-        <a href={a.url} download={a.name} className="icon-btn" aria-label="Download">
+        <a href={url} download={a.name} target="_blank" rel="noopener noreferrer" className="icon-btn" aria-label="Download">
           <Icon name="download" />
         </a>
         <button type="button" className="icon-btn" onClick={() => open(null)} aria-label="Close">
@@ -647,9 +644,9 @@ export function Lightbox() {
         </button>
       </div>
       {a.kind === 'video' ? (
-        <video src={a.url} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
+        <video src={url} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
       ) : (
-        <img src={a.url} alt={a.name} onClick={(e) => e.stopPropagation()} />
+        <img src={url} alt={a.name} onClick={(e) => e.stopPropagation()} />
       )}
     </div>
   );

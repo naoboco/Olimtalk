@@ -1,4 +1,5 @@
 import type { Attachment } from '../../../shared/types.ts';
+import { API_ORIGIN, TOKEN_MODE, getToken } from './platform.ts';
 
 export class ApiError extends Error {
   constructor(
@@ -10,13 +11,22 @@ export class ApiError extends Error {
   }
 }
 
+/** The website relies on its httpOnly cookie; the apps send their session token. */
+function authHeaders(): Record<string, string> {
+  if (!TOKEN_MODE) return {};
+  const token = getToken();
+  return { 'X-OlimTalk-Client': 'app', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+const credentials: RequestCredentials = TOKEN_MODE ? 'omit' : 'same-origin';
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
-    res = await fetch('/api' + url, {
+    res = await fetch(`${API_ORIGIN}/api${url}`, {
       method,
-      credentials: 'same-origin',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      credentials,
+      headers: { ...authHeaders(), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -38,7 +48,7 @@ export const api = {
     form.append('file', file, name);
     let res: Response;
     try {
-      res = await fetch('/api/upload', { method: 'POST', body: form, credentials: 'same-origin' });
+      res = await fetch(`${API_ORIGIN}/api/upload`, { method: 'POST', body: form, credentials, headers: authHeaders() });
     } catch {
       throw new ApiError(0, 'network_error');
     }

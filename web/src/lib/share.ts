@@ -1,5 +1,8 @@
 // Sharing outside OlimTalk: WhatsApp, Facebook, Telegram, Instagram (via an image card), e-mail…
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import QRCode from 'qrcode';
+import { IS_NATIVE, PUBLIC_ORIGIN } from './platform.ts';
 
 export interface SharePayload {
   /** Headline of what is shared (group name, event title…). */
@@ -13,7 +16,7 @@ export interface SharePayload {
   cta?: string;
 }
 
-export const inviteUrl = (code: string) => `${window.location.origin}/join/${code}`;
+export const inviteUrl = (code: string) => `${PUBLIC_ORIGIN}/join/${code}`;
 
 const enc = encodeURIComponent;
 
@@ -57,19 +60,44 @@ export async function copyText(text: string): Promise<boolean> {
 }
 
 export function canNativeShare(): boolean {
-  return typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  return IS_NATIVE || (typeof navigator !== 'undefined' && typeof navigator.share === 'function');
 }
 
-export function canShareFiles(file: File): boolean {
-  return canNativeShare() && typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
-}
+const toBase64 = (file: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 
-/** Open the system share sheet. Resolves false when unavailable or dismissed. */
+/**
+ * Open the system share sheet (where WhatsApp, Instagram, Facebook… appear), with an
+ * image when one is given. Resolves false when unavailable or dismissed.
+ */
 export async function nativeShare(p: SharePayload, file?: File): Promise<boolean> {
-  if (!canNativeShare()) return false;
+  if (IS_NATIVE) {
+    try {
+      if (file) {
+        // The share sheet needs a real file: write the image to the app's cache first.
+        const saved = await Filesystem.writeFile({ path: file.name || 'olimtalk.png', data: await toBase64(file), directory: Directory.Cache });
+        await Share.share({ title: p.title, text: `${p.text}\n${p.url}`, files: [saved.uri], dialogTitle: p.title });
+      } else {
+        await Share.share({ title: p.title, text: p.text, url: p.url, dialogTitle: p.title });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (typeof navigator === 'undefined' || typeof navigator.share !== 'function') return false;
   try {
-    if (file && canShareFiles(file)) await navigator.share({ files: [file], title: p.title, text: `${p.text}\n${p.url}` });
-    else await navigator.share({ title: p.title, text: p.text, url: p.url });
+    if (file) {
+      if (typeof navigator.canShare !== 'function' || !navigator.canShare({ files: [file] })) return false;
+      await navigator.share({ files: [file], title: p.title, text: `${p.text}\n${p.url}` });
+    } else {
+      await navigator.share({ title: p.title, text: p.text, url: p.url });
+    }
     return true;
   } catch {
     return false;

@@ -10,6 +10,7 @@ import { api } from '../lib/api.ts';
 import { formatDay } from '../lib/format.tsx';
 import { useT, type Key } from '../lib/i18n.ts';
 import { uploadFile } from '../lib/media.ts';
+import { PUBLIC_ORIGIN } from '../lib/platform.ts';
 import { useStore, type Theme } from '../lib/store.ts';
 import { WorldPicker } from './Auth.tsx';
 
@@ -142,6 +143,48 @@ function PasswordDialog({ onClose }: { onClose: () => void }) {
       </Field>
       <Field label={t('new_password')} hint={t('password_hint')}>
         <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+      </Field>
+    </Modal>
+  );
+}
+
+function DeleteAccountDialog({ onClose }: { onClose: () => void }) {
+  const t = useT();
+  const { error, toast, deleteAccount } = useStore.getState();
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal
+      title={t('delete_account')}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn ghost" onClick={onClose}>
+            {t('cancel')}
+          </button>
+          <button
+            type="button"
+            className="btn danger"
+            disabled={busy || !password}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await deleteAccount(password);
+                toast(t('account_deleted'));
+              } catch (e) {
+                error(e);
+                setBusy(false);
+              }
+            }}
+          >
+            {t('delete_account_confirm')}
+          </button>
+        </>
+      }
+    >
+      <div className="banner error">{t('delete_account_text')}</div>
+      <Field label={t('password')}>
+        <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
       </Field>
     </Modal>
   );
@@ -332,7 +375,7 @@ export function ProfilePage() {
   const lang = useStore((s) => s.lang);
   const theme = useStore((s) => s.theme);
   const { setMe, setTheme, switchWorld, logout, error, toast, openShare } = useStore.getState();
-  const [dialog, setDialog] = useState<'edit' | 'password' | 'starred' | 'blocked' | 'moderation' | null>(null);
+  const [dialog, setDialog] = useState<'edit' | 'password' | 'starred' | 'blocked' | 'moderation' | 'delete' | null>(null);
   const [uploading, setUploading] = useState(false);
   const [notif, setNotif] = useState(() => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission));
   const input = useRef<HTMLInputElement>(null);
@@ -421,7 +464,7 @@ export function ProfilePage() {
               icon="share"
               label={t('invite_friends')}
               hint={t('invite_friends_hint')}
-              onClick={() => openShare({ title: 'OlimTalk', text: t('share_app_text'), url: window.location.origin, emoji: '💙', cta: t('share_cta_app') })}
+              onClick={() => openShare({ title: 'OlimTalk', text: t('share_app_text'), url: PUBLIC_ORIGIN, emoji: '💙', cta: t('share_cta_app') })}
             />
             <Row icon="block" label={t('blocked_users')} hint={me.blocked.length ? String(me.blocked.length) : undefined} onClick={() => setDialog('blocked')} />
             <Row icon="shield" label={t('change_password')} onClick={() => setDialog('password')} />
@@ -430,6 +473,7 @@ export function ProfilePage() {
 
           <div className="card list-card">
             <Row icon="logout" label={t('log_out')} danger onClick={() => void logout()} />
+            <Row icon="trash" label={t('delete_account')} hint={t('delete_account_hint')} danger onClick={() => setDialog('delete')} />
           </div>
           <p className="muted small center">OlimTalk · {t('footer_tagline')}</p>
         </div>
@@ -439,6 +483,7 @@ export function ProfilePage() {
       {dialog === 'starred' && <StarredDialog onClose={() => setDialog(null)} />}
       {dialog === 'blocked' && <BlockedDialog onClose={() => setDialog(null)} />}
       {dialog === 'moderation' && <ModerationDialog onClose={() => setDialog(null)} />}
+      {dialog === 'delete' && <DeleteAccountDialog onClose={() => setDialog(null)} />}
     </div>
   );
 }

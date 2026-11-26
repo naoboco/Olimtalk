@@ -3,6 +3,7 @@ import type { Attachment, Chat, EventData, Lang, Message, MessagePreview, PollDa
 import { api } from '../lib/api.ts';
 import { colorFor, formatBytes, formatDateTime, formatDuration, formatMonth, formatTime, isEmojiOnly, plainText, richText } from '../lib/format.tsx';
 import { useT, type T } from '../lib/i18n.ts';
+import { asset } from '../lib/platform.ts';
 import { inviteUrl } from '../lib/share.ts';
 import { useStore, type ClientMessage } from '../lib/store.ts';
 import { Icon } from './icons.tsx';
@@ -100,7 +101,7 @@ function AttachmentView({ a }: { a: Attachment }) {
     const width = Math.min(320, Math.max(160, Math.round(260 * Math.min(ratio, 1.4))));
     return (
       <button type="button" className="media" style={{ width, aspectRatio: String(Math.max(0.6, Math.min(ratio, 2))) }} onClick={() => openLightbox(a)}>
-        {a.kind === 'image' ? <img src={a.url} alt={a.name} loading="lazy" /> : <video src={a.url} preload="metadata" muted playsInline />}
+        {a.kind === 'image' ? <img src={asset(a.url)} alt={a.name} loading="lazy" /> : <video src={asset(a.url)} preload="metadata" muted playsInline />}
         {a.kind === 'video' && (
           <span className="media-play">
             <Icon name="play" size={26} fill />
@@ -109,9 +110,9 @@ function AttachmentView({ a }: { a: Attachment }) {
       </button>
     );
   }
-  if (a.kind === 'audio') return <AudioPlayer src={a.url} duration={a.duration} />;
+  if (a.kind === 'audio') return <AudioPlayer src={asset(a.url)} duration={a.duration} />;
   return (
-    <a className="file" href={a.url} download={a.name} target="_blank" rel="noopener noreferrer">
+    <a className="file" href={asset(a.url)} download={a.name} target="_blank" rel="noopener noreferrer">
       <span className="file-icon">
         <Icon name="file" size={22} />
       </span>

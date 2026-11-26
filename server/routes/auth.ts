@@ -1,4 +1,6 @@
-import { Router } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { CITIES } from '../../shared/data.ts';
 import {
@@ -10,17 +12,21 @@ import {
   me,
   requireAuth,
   setSessionCookie,
-  tokenFromCookieHeader,
+  tokenFromRequest,
   verifyPassword,
+  wantsToken,
 } from '../auth.ts';
 import { getUser, joinChat, toMe, toUserPublic } from '../core.ts';
-import { db, type ChatRow, type UserRow } from '../db.ts';
-import { emitToUser } from '../realtime.ts';
+import { UPLOAD_DIR, db, tx, type ChatRow, type UserRow } from '../db.ts';
+import { emitToChat, emitToUser, kick } from '../realtime.ts';
 import { HttpError, bad, intParam, likeEscape, now, parse, rateLimiter, strQuery, zProfile, zUploadUrl, zWorld } from '../util.ts';
 
 export const router = Router();
 
-const authLimit = rateLimiter(15, 60_000);
+// Per address: generous enough for a whole meetup signing up on the same Wi-Fi.
+const authLimit = rateLimiter(Number(process.env.AUTH_RATE_LIMIT || 40), 60_000);
+// Per account: slows down password guessing whatever the address.
+const loginLimit = rateLimiter(10, 10 * 60_000);
 const adminEmails = new Set(
   (process.env.ADMIN_EMAILS || '')
     .split(',')
@@ -78,6 +84,14 @@ export function autoJoin(user: UserRow) {
   }
 }
 
+/** Start a session: a cookie for the website, the token itself for the mobile apps. */
+function openSession(req: Request, res: Response, user: UserRow): { me: ReturnType<typeof toMe>; token?: string } {
+  const token = createSession(user.id);
+  if (wantsToken(req)) return { me: toMe(user), token };
+  setSessionCookie(req, res, token);
+  return { me: toMe(user) };
+}
+
 router.post('/auth/register', async (req, res) => {
   if (!authLimit(req.ip ?? 'ip')) throw new HttpError(429, 'too_many_requests');
   const body = parse(
@@ -115,13 +129,13 @@ router.post('/auth/register', async (req, res) => {
     );
   const user = getUser(Number(info.lastInsertRowid))!;
   autoJoin(user);
-  setSessionCookie(req, res, createSession(user.id));
-  res.status(201).json({ me: toMe(user) });
+  res.status(201).json(openSession(req, res, user));
 });
 
 router.post('/auth/login', async (req, res) => {
   if (!authLimit(req.ip ?? 'ip')) throw new HttpError(429, 'too_many_requests');
   const body = parse(z.object({ email: z.string().max(200), password: z.string().max(200) }), req.body);
+  if (!loginLimit(body.email.trim().toLowerCase())) throw new HttpError(429, 'too_many_requests');
   const user = db.prepare('SELECT * FROM users WHERE email = ? AND is_system = 0').get(body.email.trim().toLowerCase()) as
     | UserRow
     | undefined;
@@ -133,12 +147,11 @@ router.post('/auth/login', async (req, res) => {
     db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(user.id);
     user.is_admin = 1;
   }
-  setSessionCookie(req, res, createSession(user.id));
-  res.json({ me: toMe(user) });
+  res.json(openSession(req, res, user));
 });
 
 router.post('/auth/logout', (req, res) => {
-  const token = tokenFromCookieHeader(req.headers.cookie);
+  const token = tokenFromRequest(req);
   if (token) destroySession(token);
   clearSessionCookie(res);
   res.json({ ok: true });
@@ -172,7 +185,7 @@ router.patch('/me', requireAuth, async (req, res) => {
   if (body.password) {
     if (!(await verifyPassword(body.currentPassword ?? '', user.password_hash))) throw new HttpError(403, 'wrong_password');
     passwordHash = await hashPassword(body.password);
-    destroyOtherSessions(user.id, tokenFromCookieHeader(req.headers.cookie));
+    destroyOtherSessions(user.id, tokenFromRequest(req));
   }
   const next = {
     name: body.name ?? user.name,
@@ -190,6 +203,92 @@ router.patch('/me', requireAuth, async (req, res) => {
   const updated = getUser(user.id)!;
   emitToUser(user.id, 'me:update', toMe(updated));
   res.json({ me: toMe(updated) });
+});
+
+/** Delete uploaded files that nothing references any more. */
+function removeOrphanUploads(urls: string[]) {
+  const used = db.prepare(
+    `SELECT 1 WHERE EXISTS (SELECT 1 FROM messages WHERE attachment LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM stories WHERE media LIKE ? ESCAPE '\\')
+        OR EXISTS (SELECT 1 FROM users WHERE avatar = ?)
+        OR EXISTS (SELECT 1 FROM chats WHERE avatar = ?)
+        OR EXISTS (SELECT 1 FROM communities WHERE avatar = ?)`,
+  );
+  for (const url of new Set(urls)) {
+    if (!/^\/uploads\/[A-Za-z0-9_-]+\.[a-z0-9]{1,5}$/.test(url)) continue;
+    const like = `%"${likeEscape(url)}"%`;
+    if (used.get(like, like, url, url, url)) continue;
+    fs.rm(path.join(UPLOAD_DIR, path.basename(url)), { force: true }, () => undefined);
+  }
+}
+
+/**
+ * Permanently delete the account and everything its owner posted.
+ * Both app stores require this to be possible from inside the app.
+ */
+router.post('/me/delete', requireAuth, async (req, res) => {
+  const user = me(req);
+  const body = parse(z.object({ password: z.string().max(200) }), req.body);
+  if (!(await verifyPassword(body.password, user.password_hash))) throw new HttpError(403, 'wrong_password');
+
+  const urls: string[] = [];
+  if (user.avatar) urls.push(user.avatar);
+  const collect = (rows: { json: string | null }[]) => {
+    for (const r of rows) {
+      try {
+        const url = r.json ? (JSON.parse(r.json) as { url?: string }).url : undefined;
+        if (url) urls.push(url);
+      } catch {
+        /* ignore malformed rows */
+      }
+    }
+  };
+  collect(db.prepare('SELECT attachment AS json FROM messages WHERE user_id = ? AND attachment IS NOT NULL').all(user.id) as { json: string }[]);
+  collect(db.prepare('SELECT media AS json FROM stories WHERE user_id = ? AND media IS NOT NULL').all(user.id) as { json: string }[]);
+
+  const groups = db
+    .prepare("SELECT c.id, m.role FROM chat_members m JOIN chats c ON c.id = m.chat_id WHERE m.user_id = ? AND c.type = 'group'")
+    .all(user.id) as { id: number; role: string }[];
+  const dms = (
+    db.prepare("SELECT c.id FROM chat_members m JOIN chats c ON c.id = m.chat_id WHERE m.user_id = ? AND c.type = 'dm'").all(user.id) as {
+      id: number;
+    }[]
+  ).map((r) => r.id);
+
+  tx(() => {
+    db.prepare(
+      `UPDATE chats SET member_count = MAX(member_count - 1, 0)
+       WHERE type = 'group' AND id IN (SELECT chat_id FROM chat_members WHERE user_id = ?)`,
+    ).run(user.id);
+    db.prepare(
+      `UPDATE communities SET member_count = MAX(member_count - 1, 0)
+       WHERE id IN (SELECT community_id FROM community_members WHERE user_id = ?)`,
+    ).run(user.id);
+    // Groups this person created stay alive: the longest-standing admin or member takes over.
+    const heir = db.prepare(
+      `SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?
+       ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, joined_at LIMIT 1`,
+    );
+    const promote = db.prepare("UPDATE chat_members SET role = 'owner' WHERE chat_id = ? AND user_id = ?");
+    for (const g of groups) {
+      if (g.role !== 'owner') continue;
+      const next = heir.get(g.id, user.id) as { user_id: number } | undefined;
+      if (next) promote.run(g.id, next.user_id);
+    }
+    // Private conversations disappear with the account.
+    const dropChat = db.prepare('DELETE FROM chats WHERE id = ?');
+    for (const id of dms) dropChat.run(id);
+    // Everything else (messages, stories, reactions, memberships, sessions…) cascades.
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+  });
+
+  // Close this person's own connections first, so that only the others are notified.
+  kick(user.id);
+  for (const id of dms) emitToChat(id, 'chat:deleted', { chatId: id });
+  for (const g of groups) emitToChat(g.id, 'chat:update', { chatId: g.id });
+  removeOrphanUploads(urls);
+  clearSessionCookie(res);
+  res.json({ ok: true });
 });
 
 // ───────────── other users ─────────────

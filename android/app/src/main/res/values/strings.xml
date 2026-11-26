@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">OlimTalk</string>
+    <string name="title_activity_main">OlimTalk</string>
+    <string name="package_name">com.olimtalk.app</string>
+    <string name="custom_url_scheme">com.olimtalk.app</string>
+</resources>

@@ -16,13 +16,26 @@
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --packages=external --target=node22 --outfile=dist/server.js",
     "start": "NODE_ENV=production node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test server/test/*.test.ts web/src/lib/*.test.tsx"
+    "test": "tsx --test server/test/*.test.ts web/src/lib/*.test.tsx",
+    "build:app": "OLIMTALK_TARGET=app vite build --config web/vite.config.ts && cap sync",
+    "android": "cap open android",
+    "ios": "cap open ios"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/naoboco/Olimtalk.git"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/app-launcher": "^8.0.1",
+    "@capacitor/core": "^8.6.3",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/ios": "^8.6.3",
+    "@capacitor/keyboard": "^8.0.6",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2",
     "better-sqlite3": "^13.2.0",
     "compression": "^1.8.2",
     "cookie": "^2.0.2",
@@ -40,6 +53,7 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.3",
     "@types/better-sqlite3": "^9.6.0",
     "@types/compression": "^1.8.1",
     "@types/express": "^5.0.6",

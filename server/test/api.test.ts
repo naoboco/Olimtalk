@@ -11,17 +11,23 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'olimtalk-test-'));
 process.env.DATA_DIR = dir;
 process.env.OLIMTALK_NO_LISTEN = '1';
 process.env.ADMIN_EMAILS = 'admin@example.com';
+process.env.AUTH_RATE_LIMIT = '1000';
 
 let base = '';
 let close: () => Promise<void>;
 
 class Client {
   cookie = '';
+  token = ''; // set for clients that behave like the mobile apps
   me!: Me;
   async req<T = any>(method: string, url: string, body?: unknown, expect = 200): Promise<T> {
     const res = await fetch(base + url, {
       method,
-      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(this.cookie ? { Cookie: this.cookie } : {}) },
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(this.cookie ? { Cookie: this.cookie } : {}),
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     const set = res.headers.get('set-cookie');
@@ -423,4 +429,139 @@ test('worlds: one inbox, explore and creation follow the current world', async (
   // A new group is created in the current world.
   const { chat } = await dave.post<{ chat: Chat }>('/api/chats', { name: 'Mate y charla' }, 201);
   assert.equal(chat.world, 'es');
+});
+
+test('mobile apps: token sessions instead of cookies, for the API and the realtime channel', async () => {
+  const res = await fetch(base + '/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-OlimTalk-Client': 'app', Origin: 'capacitor://localhost' },
+    body: JSON.stringify({ email: 'mobile@example.com', password: 'password123', name: 'Mobile', world: 'fr', city: 'haifa' }),
+  });
+  assert.equal(res.status, 201);
+  assert.equal(res.headers.get('set-cookie'), null, 'the app never receives a cookie');
+  assert.equal(res.headers.get('access-control-allow-origin'), 'capacitor://localhost');
+  assert.equal(res.headers.get('access-control-allow-credentials'), null);
+  const { me, token } = (await res.json()) as { me: Me; token: string };
+  assert.ok(token.length > 30);
+
+  const app = new Client();
+  app.token = token;
+  const { chats } = await app.get<{ chats: Chat[] }>('/api/chats');
+  assert.ok(chats.some((c) => c.name === 'Haïfa'));
+  await new Client().get('/api/chats', 401);
+  const forged = new Client();
+  forged.token = token.slice(0, -2) + 'xx';
+  await forged.get('/api/chats', 401);
+
+  // The website keeps its httpOnly cookie and never sees a token.
+  const web = (await (
+    await fetch(base + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'mobile@example.com', password: 'password123' }),
+    })
+  ).json()) as { token?: string };
+  assert.equal(web.token, undefined);
+
+  // realtime with the token in the handshake
+  const socket = await new Promise<Socket>((resolve, reject) => {
+    const s = ioClient(base, { auth: { token }, transports: ['websocket'] });
+    s.on('connect', () => resolve(s));
+    s.on('connect_error', reject);
+  });
+  try {
+    const haifa = chats.find((c) => c.name === 'Haïfa')!;
+    await alice.post(`/api/chats/${haifa.id}/join`);
+    const incoming = once<Message>(socket, 'message:new');
+    await alice.post(`/api/chats/${haifa.id}/messages`, { text: 'Shalom Haïfa' }, 201);
+    assert.equal((await incoming).text, 'Shalom Haïfa');
+  } finally {
+    socket.close();
+  }
+  await assert.rejects(
+    new Promise((resolve, reject) => {
+      const s = ioClient(base, { auth: { token: 'nope' }, transports: ['websocket'], reconnection: false });
+      s.on('connect', () => resolve(undefined));
+      s.on('connect_error', reject);
+    }),
+  );
+
+  // logging out invalidates the token
+  await app.post('/api/auth/logout');
+  await app.get('/api/chats', 401);
+  assert.equal(me.name, 'Mobile');
+});
+
+test('login attempts are limited per account', async () => {
+  await Client.register('Heidi');
+  for (let i = 0; i < 10; i++) await new Client().post('/api/auth/login', { email: 'heidi@example.com', password: 'guess-' + i }, 401);
+  await new Client().post('/api/auth/login', { email: 'heidi@example.com', password: 'password123' }, 429);
+});
+
+test('mobile apps: cross-origin access is limited to the app origins', async () => {
+  const preflight = (origin: string) =>
+    fetch(base + '/api/chats', {
+      method: 'OPTIONS',
+      headers: { Origin: origin, 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'authorization' },
+    });
+  for (const origin of ['capacitor://localhost', 'https://localhost']) {
+    const ok = await preflight(origin);
+    assert.equal(ok.status, 204);
+    assert.equal(ok.headers.get('access-control-allow-origin'), origin);
+    assert.match(ok.headers.get('access-control-allow-headers') ?? '', /Authorization/);
+  }
+  const evil = await preflight('https://evil.example');
+  assert.equal(evil.headers.get('access-control-allow-origin'), null);
+  // Uploaded media must be displayable from the app.
+  const form = new FormData();
+  form.append('file', new Blob(['x'], { type: 'image/png' }), 'a.png');
+  const up = (await (await fetch(base + '/api/upload', { method: 'POST', body: form, headers: { Cookie: alice.cookie } })).json()) as { url: string };
+  const img = await fetch(base + up.url, { headers: { Origin: 'capacitor://localhost' } });
+  assert.equal(img.headers.get('cross-origin-resource-policy'), 'cross-origin');
+});
+
+test('account deletion removes the person and their content, and keeps their groups alive', async () => {
+  const frank = await Client.register('Frank');
+  const grace = await Client.register('Grace');
+  const { chat } = await frank.post<{ chat: Chat }>('/api/chats', { name: 'Groupe de Frank' }, 201);
+  await grace.post(`/api/chats/${chat.id}/join`);
+  await frank.post(`/api/chats/${chat.id}/messages`, { text: 'Message de Frank' }, 201);
+  await grace.post(`/api/chats/${chat.id}/messages`, { text: 'Message de Grace' }, 201);
+  const dm = await frank.post<{ chat: Chat }>('/api/dm', { userId: grace.me.id });
+  await frank.post(`/api/chats/${dm.chat.id}/messages`, { text: 'privé' }, 201);
+  await frank.post('/api/stories', { text: 'story de Frank' }, 201);
+  // an uploaded photo that only Frank uses
+  const form = new FormData();
+  form.append('file', new Blob(['frank'], { type: 'image/png' }), 'frank.png');
+  const file = (await (await fetch(base + '/api/upload', { method: 'POST', body: form, headers: { Cookie: frank.cookie } })).json()) as {
+    url: string;
+    name: string;
+    size: number;
+    mime: string;
+    kind: string;
+  };
+  await frank.post(`/api/chats/${chat.id}/messages`, { attachment: file }, 201);
+  assert.equal((await fetch(base + file.url)).status, 200);
+
+  await frank.post('/api/me/delete', { password: 'wrong-password' }, 403);
+  await frank.post('/api/me/delete', { password: 'password123' });
+
+  await frank.get('/api/chats', 401);
+  await new Client().post('/api/auth/login', { email: 'frank@example.com', password: 'password123' }, 401);
+  await grace.get(`/api/users/${frank.me.id}`, 404);
+
+  const after = await grace.get<{ chat: Chat }>(`/api/chats/${chat.id}`);
+  assert.equal(after.chat.memberCount, 1);
+  assert.equal(after.chat.role, 'owner', 'the remaining member inherits the group');
+  const history = await grace.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+  assert.deepEqual(history.messages.map((m) => m.text), ['Message de Grace']);
+  const { chats } = await grace.get<{ chats: Chat[] }>('/api/chats');
+  assert.ok(!chats.some((c) => c.id === dm.chat.id), 'the private conversation is gone');
+  const stories = await grace.get<{ groups: StoryGroup[] }>('/api/stories');
+  assert.ok(!stories.groups.some((g) => g.user.id === frank.me.id));
+  // give the asynchronous file removal a moment
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal((await fetch(base + file.url)).status, 404, 'their uploaded files are removed');
+  // the e-mail address is free again
+  await Client.register('Frank');
 });

@@ -13,6 +13,7 @@ import {
   whatsappUrl,
   xUrl,
 } from '../lib/share.ts';
+import { IS_NATIVE, openExternal } from '../lib/platform.ts';
 import { useStore } from '../lib/store.ts';
 import { Icon } from './icons.tsx';
 import { Modal, Spinner } from './ui.tsx';
@@ -44,7 +45,7 @@ export function ShareSheet() {
 
   if (!p) return null;
   const close = () => openShare(null);
-  const open = (url: string) => window.open(url, '_blank', 'noopener,noreferrer');
+  const open = (url: string) => void openExternal(url);
 
   const copy = async () => {
     if (await copyText(p.url)) toast(t('link_copied'));
@@ -69,7 +70,10 @@ export function ShareSheet() {
   const saveCard = async () => {
     setBusy(true);
     try {
-      downloadFile(await makeShareCard(p));
+      const card = await makeShareCard(p);
+      // A phone app has no "downloads": hand the image to the share sheet (save, send, post…).
+      if (IS_NATIVE) await nativeShare(p, card);
+      else downloadFile(card);
     } finally {
       setBusy(false);
     }
@@ -116,12 +120,12 @@ export function ShareSheet() {
           </span>
           X
         </button>
-        <a className="share-target" href={emailUrl(p)}>
+        <button type="button" className="share-target" onClick={() => (IS_NATIVE ? open(emailUrl(p)) : (window.location.href = emailUrl(p)))}>
           <span className="share-icon" style={{ background: '#6B7280' }}>
             <Icon name="at" size={22} />
           </span>
           E-mail
-        </a>
+        </button>
         <button type="button" className="share-target" onClick={() => void copy()}>
           <span className="share-icon" style={{ background: 'var(--primary)' }}>
             <Icon name="link" size={22} />
@@ -144,7 +148,7 @@ export function ShareSheet() {
           <strong>{t('share_qr_title')}</strong>
           <p className="muted small">{t('share_qr_text')}</p>
           <button type="button" className="btn small soft" onClick={() => void saveCard()} disabled={busy}>
-            <Icon name="download" size={16} /> {t('share_download_card')}
+            <Icon name={IS_NATIVE ? 'share' : 'download'} size={16} /> {IS_NATIVE ? t('share_card') : t('share_download_card')}
           </button>
         </div>
       </div>

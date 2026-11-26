@@ -346,6 +346,14 @@ export const en: Dict = {
   change_password: 'Change password',
   current_password: 'Current password',
   new_password: 'New password',
+  share_card: 'Share image',
+  delete_account: 'Delete my account',
+  delete_account_hint: 'Permanent',
+  delete_account_text: 'Your account, messages, stories and files will be permanently deleted. This cannot be undone.',
+  delete_account_confirm: 'Delete permanently',
+  account_deleted: 'Your account has been deleted.',
+  boot_offline: 'Could not reach OlimTalk. Check your connection.',
+  boot_misconfigured: 'This version of the app has no server address. Please contact the OlimTalk team.',
   footer_tagline: 'made with 💙 for olim',
 
   // errors
