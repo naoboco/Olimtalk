@@ -99,13 +99,15 @@ function renderIndex(req: Request, og: { title: string; description: string }): 
     `<meta property="og:title" content="${escapeHtml(og.title)}">`,
     `<meta property="og:description" content="${escapeHtml(og.description)}">`,
     `<meta property="og:url" content="${escapeHtml(origin + req.path)}">`,
-    `<meta property="og:image" content="${escapeHtml(origin)}/og.png">`,
+    `<meta property="og:image" content="${escapeHtml(origin)}/og.jpg">`,
     `<meta property="og:image:width" content="1200">`,
     `<meta property="og:image:height" content="630">`,
     `<meta name="twitter:card" content="summary_large_image">`,
   ].join('\n    ');
   return html.replace(/<title>.*?<\/title>/s, tags);
 }
+
+const withCount = (members: number, text: string) => `${members > 0 ? `${members} 👥 — ` : ''}${text}`.slice(0, 280);
 
 app.use(express.static(WEB_DIR, { index: false, maxAge: PROD ? '1h' : 0 }));
 
@@ -115,12 +117,12 @@ app.get('/join/:code', (req, res, next) => {
   if (found.chat) {
     og = {
       title: `${found.chat.emoji} ${found.chat.name} · OlimTalk`,
-      description: `${found.chat.member_count} 👥 — ${found.chat.description}`.slice(0, 280),
+      description: withCount(found.chat.member_count, found.chat.description),
     };
   } else if (found.community) {
     og = {
       title: `${found.community.emoji} ${found.community.name} · OlimTalk`,
-      description: `${found.community.member_count} 👥 — ${found.community.description}`.slice(0, 280),
+      description: withCount(found.community.member_count, found.community.description),
     };
   }
   const html = renderIndex(req, og);
