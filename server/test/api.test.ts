@@ -1,0 +1,380 @@
+// End-to-end API tests: boots the real server on a random port with a throw-away database.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { after, before, test } from 'node:test';
+import { io as ioClient, type Socket } from 'socket.io-client';
+import type { Chat, Community, Me, Message, StoryGroup } from '../../shared/types.ts';
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'olimtalk-test-'));
+process.env.DATA_DIR = dir;
+process.env.OLIMTALK_NO_LISTEN = '1';
+process.env.ADMIN_EMAILS = 'admin@example.com';
+
+let base = '';
+let close: () => Promise<void>;
+
+class Client {
+  cookie = '';
+  me!: Me;
+  async req<T = any>(method: string, url: string, body?: unknown, expect = 200): Promise<T> {
+    const res = await fetch(base + url, {
+      method,
+      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(this.cookie ? { Cookie: this.cookie } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const set = res.headers.get('set-cookie');
+    if (set) this.cookie = set.split(';')[0]!;
+    const json = (await res.json().catch(() => ({}))) as T;
+    assert.equal(res.status, expect, `${method} ${url} → ${res.status} ${JSON.stringify(json)}`);
+    return json;
+  }
+  get = <T = any>(url: string, expect?: number) => this.req<T>('GET', url, undefined, expect);
+  post = <T = any>(url: string, body: unknown = {}, expect?: number) => this.req<T>('POST', url, body, expect);
+  patch = <T = any>(url: string, body: unknown = {}, expect?: number) => this.req<T>('PATCH', url, body, expect);
+  del = <T = any>(url: string, expect?: number) => this.req<T>('DELETE', url, undefined, expect);
+
+  static async register(name: string, extra: Record<string, unknown> = {}): Promise<Client> {
+    const c = new Client();
+    const email = `${name.toLowerCase()}@example.com`;
+    const r = await c.post<{ me: Me }>('/api/auth/register', { email, password: 'password123', name, world: 'fr', ...extra }, 201);
+    c.me = r.me;
+    return c;
+  }
+  socket(): Promise<Socket> {
+    return new Promise((resolve, reject) => {
+      const s = ioClient(base, { extraHeaders: { Cookie: this.cookie }, transports: ['websocket'] });
+      s.on('connect', () => resolve(s));
+      s.on('connect_error', reject);
+    });
+  }
+}
+
+const once = <T>(s: Socket, event: string) => new Promise<T>((resolve) => s.once(event, resolve));
+
+let alice: Client;
+let bob: Client;
+let admin: Client;
+
+before(async () => {
+  const mod = await import('../index.ts');
+  await new Promise<void>((resolve) => mod.server.listen(0, resolve));
+  const addr = mod.server.address();
+  base = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+  close = () => new Promise((resolve) => mod.server.close(() => resolve()));
+  alice = await Client.register('Alice', { profile: 'student', city: 'tel-aviv' });
+  bob = await Client.register('Bob', { profile: 'medical', city: 'netanya' });
+  admin = await Client.register('Admin');
+});
+
+after(async () => {
+  await close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('registration auto-joins welcome, events, city and profile groups', async () => {
+  const { chats } = await alice.get<{ chats: Chat[] }>('/api/chats');
+  const names = chats.map((c) => c.name);
+  assert.ok(names.includes('Bienvenue & Entraide'));
+  assert.ok(names.includes('Événements & Sorties'));
+  assert.ok(names.includes('Tel Aviv'));
+  assert.ok(names.includes('Étudiants'));
+  assert.ok(chats.every((c) => c.isMember));
+  // The welcome message is pinned but does not count as unread for a newcomer.
+  assert.equal(chats.find((c) => c.name === 'Tel Aviv')!.unread, 0);
+  assert.equal(admin.me.isAdmin, true);
+  assert.equal(alice.me.isAdmin, false);
+});
+
+test('auth: duplicate email, bad password, session required', async () => {
+  await new Client().post('/api/auth/register', { email: 'alice@example.com', password: 'password123', name: 'Dup', world: 'fr' }, 409);
+  await new Client().post('/api/auth/login', { email: 'alice@example.com', password: 'nope-nope' }, 401);
+  await new Client().get('/api/chats', 401);
+  const again = new Client();
+  const r = await again.post<{ me: Me }>('/api/auth/login', { email: 'ALICE@example.com', password: 'password123' });
+  assert.equal(r.me.id, alice.me.id);
+  await again.post('/api/auth/logout');
+  await again.get('/api/chats', 401);
+});
+
+test('every world is seeded with city, profile, sport and event groups', async () => {
+  for (const world of ['fr', 'en', 'es', 'ru']) {
+    const r = await alice.get<{ groups: Chat[]; communities: Community[] }>(`/api/explore?world=${world}`);
+    assert.equal(r.communities.length, 4, world);
+    const cats = new Set(r.groups.map((g) => g.category));
+    for (const c of ['city', 'profile', 'sport', 'event', 'general']) {
+      const one = await alice.get<{ groups: Chat[] }>(`/api/explore?world=${world}&category=${c}`);
+      assert.ok(one.groups.length > 0, `${world}/${c}`);
+    }
+    assert.ok(cats.size >= 3);
+  }
+  const cities = await alice.get<{ groups: Chat[] }>('/api/explore?world=ru&category=city&q=Хайфа');
+  assert.equal(cities.groups.length, 1);
+});
+
+test('public groups: read without joining, join without limit, post only as member', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Surf à Herzliya', description: 'Vagues', emoji: '🏄', category: 'sport' }, 201);
+  assert.equal(chat.role, 'owner');
+  assert.equal(chat.memberCount, 1);
+  await alice.post(`/api/chats/${chat.id}/messages`, { text: 'Premier message' }, 201);
+
+  // Bob is not a member: he can read…
+  const peek = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+  assert.ok(peek.messages.some((m) => m.text === 'Premier message'));
+  // …but not write.
+  await bob.post(`/api/chats/${chat.id}/messages`, { text: 'Coucou' }, 403);
+
+  // Joining through the public invite link.
+  const preview = await new Client().get<{ kind: string; chat: Chat }>(`/api/invite/${chat.inviteCode}`);
+  assert.equal(preview.chat.name, 'Surf à Herzliya');
+  assert.equal(preview.chat.isMember, false);
+  const joined = await bob.post<{ chat: Chat }>(`/api/invite/${chat.inviteCode}/join`);
+  assert.equal(joined.chat.isMember, true);
+  assert.equal(joined.chat.memberCount, 2);
+  await bob.post(`/api/chats/${chat.id}/messages`, { text: 'Coucou' }, 201);
+
+  // Resetting the link invalidates the old one.
+  const reset = await alice.post<{ chat: Chat }>(`/api/chats/${chat.id}/invite/reset`);
+  assert.notEqual(reset.chat.inviteCode, chat.inviteCode);
+  await bob.get(`/api/invite/${chat.inviteCode}`, 404);
+  await bob.post(`/api/chats/${chat.id}/invite/reset`, {}, 403);
+});
+
+test('messaging: realtime delivery, reply, edit, reactions, pin, star, forward, delete', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Test messagerie' }, 201);
+  await bob.post(`/api/chats/${chat.id}/join`);
+  const bobSocket = await bob.socket();
+  try {
+    const incoming = once<Message>(bobSocket, 'message:new');
+    const { message: first } = await alice.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'Shalom *tout le monde* @bob' }, 201);
+    const got = await incoming;
+    assert.equal(got.id, first.id);
+    assert.deepEqual(got.mentions, [bob.me.id]);
+
+    let list = await bob.get<{ chats: Chat[] }>('/api/chats');
+    assert.equal(list.chats.find((c) => c.id === chat.id)!.unread, 1);
+    await bob.post(`/api/chats/${chat.id}/read`, { messageId: first.id });
+    list = await bob.get<{ chats: Chat[] }>('/api/chats');
+    assert.equal(list.chats.find((c) => c.id === chat.id)!.unread, 0);
+
+    // reply
+    const { message: reply } = await bob.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'Shalom !', replyToId: first.id }, 201);
+    assert.equal(reply.replyTo?.id, first.id);
+
+    // edit (only by the author)
+    await bob.patch(`/api/messages/${first.id}`, { text: 'pirate' }, 403);
+    const patched = once<{ id: number; patch: { text: string } }>(bobSocket, 'message:patch');
+    await alice.patch(`/api/messages/${first.id}`, { text: 'Shalom à tous' });
+    assert.equal((await patched).patch.text, 'Shalom à tous');
+
+    // reactions
+    const reacted = once<{ reactions: { emoji: string; count: number }[] }>(bobSocket, 'message:reaction');
+    await alice.post(`/api/messages/${reply.id}/react`, { emoji: '❤️' });
+    assert.deepEqual((await reacted).reactions, [{ emoji: '❤️', count: 1 }]);
+    await bob.post(`/api/messages/${reply.id}/react`, { emoji: '❤️' });
+
+    // pin: admins only by default
+    await bob.post(`/api/messages/${first.id}/pin`, { pinned: true }, 403);
+    await alice.post(`/api/messages/${first.id}/pin`, { pinned: true });
+    const pins = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/pins`);
+    assert.deepEqual(pins.messages.map((m) => m.id), [first.id]);
+    await alice.patch(`/api/chats/${chat.id}`, { pinPolicy: 'all' });
+    await bob.post(`/api/messages/${reply.id}/pin`, { pinned: true });
+
+    // star + history flags
+    await bob.post(`/api/messages/${first.id}/star`, { starred: true });
+    const history = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+    const h1 = history.messages.find((m) => m.id === first.id)!;
+    const h2 = history.messages.find((m) => m.id === reply.id)!;
+    assert.equal(h1.starred, true);
+    assert.equal(h1.text, 'Shalom à tous');
+    assert.ok(h1.editedAt);
+    assert.deepEqual(h2.reactions, [{ emoji: '❤️', count: 2, mine: true }]);
+    const starred = await bob.get<{ messages: Message[] }>('/api/starred');
+    assert.equal(starred.messages.length, 1);
+
+    // search
+    const search = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/search?q=shalom`);
+    assert.equal(search.messages.length, 2);
+
+    // forward into a DM
+    const dm = await bob.post<{ chat: Chat }>('/api/dm', { userId: alice.me.id });
+    await bob.post(`/api/messages/${first.id}/forward`, { chatIds: [dm.chat.id] });
+    const dmHistory = await alice.get<{ messages: Message[] }>(`/api/chats/${dm.chat.id}/messages`);
+    assert.equal(dmHistory.messages[0]!.forwarded, true);
+    // DMs are private.
+    await admin.get(`/api/chats/${dm.chat.id}/messages`, 403);
+
+    // delete for me / for everyone
+    await bob.del(`/api/messages/${first.id}?scope=me`);
+    const afterHide = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+    assert.ok(!afterHide.messages.some((m) => m.id === first.id));
+    await bob.del(`/api/messages/${first.id}?scope=all`, 403);
+    await alice.del(`/api/messages/${reply.id}?scope=all`); // group admin may delete anyone's message
+    const afterDelete = await alice.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+    const gone = afterDelete.messages.find((m) => m.id === reply.id)!;
+    assert.equal(gone.deleted, true);
+    assert.equal(gone.text, '');
+  } finally {
+    bobSocket.close();
+  }
+});
+
+test('announcement mode: only admins can post', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Annonces test' }, 201);
+  await bob.post(`/api/chats/${chat.id}/join`);
+  await alice.patch(`/api/chats/${chat.id}`, { sendPolicy: 'admins' });
+  await bob.post(`/api/chats/${chat.id}/messages`, { text: 'non' }, 403);
+  await alice.patch(`/api/chats/${chat.id}/members/${bob.me.id}`, { role: 'admin' });
+  await bob.post(`/api/chats/${chat.id}/messages`, { text: 'oui' }, 201);
+  // members list shows roles; removing a member works
+  const members = await alice.get<{ members: { user: { id: number }; role: string }[] }>(`/api/chats/${chat.id}/members`);
+  assert.deepEqual(members.members.map((m) => m.role), ['owner', 'admin']);
+  await alice.del(`/api/chats/${chat.id}/members/${bob.me.id}`);
+  const again = await bob.get<{ chat: Chat }>(`/api/chats/${chat.id}`);
+  assert.equal(again.chat.isMember, false);
+});
+
+test('polls and events', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Sorties test', category: 'event' }, 201);
+  await bob.post(`/api/chats/${chat.id}/join`);
+  const { message: poll } = await alice.post<{ message: Message }>(
+    `/api/chats/${chat.id}/messages`,
+    { poll: { question: 'Quel jour ?', options: ['Jeudi', 'Vendredi', 'Samedi soir'], multiple: false } },
+    201,
+  );
+  assert.equal(poll.type, 'poll');
+  await bob.post(`/api/messages/${poll.id}/vote`, { options: [0, 1] }, 400);
+  await bob.post(`/api/messages/${poll.id}/vote`, { options: [1] });
+  await alice.post(`/api/messages/${poll.id}/vote`, { options: [1] });
+  await alice.post(`/api/messages/${poll.id}/vote`, { options: [2] }); // changing one's vote
+  const history = await bob.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+  const p = history.messages.find((m) => m.id === poll.id)!.poll!;
+  assert.deepEqual(p.counts, [0, 1, 1]);
+  assert.deepEqual(p.myVotes, [1]);
+  assert.equal(p.voters, 2);
+
+  const startsAt = Date.now() + 86_400_000;
+  const { message: ev } = await alice.post<{ message: Message }>(
+    `/api/chats/${chat.id}/events`,
+    { title: 'Apéro sur la plage', location: 'Gordon Beach', startsAt },
+    201,
+  );
+  assert.equal(ev.event!.going, 1);
+  // Answering "going" from outside the group joins it.
+  const r = await admin.post<{ event: { going: number; myStatus: string } }>(`/api/events/${ev.event!.id}/rsvp`, { status: 'going' });
+  assert.equal(r.event.going, 2);
+  assert.equal((await admin.get<{ chat: Chat }>(`/api/chats/${chat.id}`)).chat.isMember, true);
+  const upcoming = await bob.get<{ events: { title: string }[] }>('/api/events?world=fr');
+  assert.ok(upcoming.events.some((e) => e.title === 'Apéro sur la plage'));
+  await alice.post(`/api/chats/${chat.id}/events`, { title: 'Trop tard', startsAt: Date.now() - 86_400_000 }, 400);
+});
+
+test('communities: create, announcement group, join', async () => {
+  const { community } = await alice.post<{ community: Community }>(
+    '/api/communities',
+    { name: 'Francophones de Tel Aviv', description: 'La communauté', announcementName: 'Annonces' },
+    201,
+  );
+  assert.equal(community.groups!.length, 1);
+  assert.equal(community.groups![0]!.isAnnouncement, true);
+  assert.equal(community.groups![0]!.sendPolicy, 'admins');
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Sous-groupe', communityId: community.id }, 201);
+  assert.equal(chat.communityId, community.id);
+  await bob.post('/api/chats', { name: 'Intrus', communityId: community.id }, 403);
+
+  const joined = await bob.post<{ kind: string; community: Community }>(`/api/invite/${community.inviteCode}/join`);
+  assert.equal(joined.community.isMember, true);
+  assert.equal(joined.community.memberCount, 2);
+  const full = await bob.get<{ community: Community }>(`/api/communities/${community.id}`);
+  assert.equal(full.community.groups!.length, 2);
+  assert.equal(full.community.groups!.find((g) => g.isAnnouncement)!.isMember, true);
+});
+
+test('stories: publish, feed, views are visible to the author only', async () => {
+  await alice.post('/api/stories', { text: 'Premier jour d’oulpan !', bg: 'linear-gradient(135deg,#2F6BFF,#12A594)' }, 201);
+  await alice.post('/api/stories', {}, 400);
+  const feed = await bob.get<{ groups: StoryGroup[] }>('/api/stories');
+  const group = feed.groups.find((g) => g.user.id === alice.me.id)!;
+  assert.equal(group.stories.length, 1);
+  assert.equal(group.allViewed, false);
+  await bob.post(`/api/stories/${group.stories[0]!.id}/view`);
+  const mine = await alice.get<{ groups: StoryGroup[] }>('/api/stories');
+  assert.equal(mine.groups[0]!.user.id, alice.me.id);
+  assert.equal(mine.groups[0]!.stories[0]!.views, 1);
+  const viewers = await alice.get<{ viewers: { id: number }[] }>(`/api/stories/${group.stories[0]!.id}/viewers`);
+  assert.deepEqual(viewers.viewers.map((v) => v.id), [bob.me.id]);
+  await bob.get(`/api/stories/${group.stories[0]!.id}/viewers`, 403);
+});
+
+test('direct messages, blocking and read receipts', async () => {
+  const carol = await Client.register('Carol');
+  const dm = await carol.post<{ chat: Chat }>('/api/dm', { userId: bob.me.id });
+  assert.equal(dm.chat.type, 'dm');
+  assert.equal(dm.chat.peer!.id, bob.me.id);
+  const same = await bob.post<{ chat: Chat }>('/api/dm', { userId: carol.me.id });
+  assert.equal(same.chat.id, dm.chat.id);
+  const bobSocket = await bob.socket();
+  try {
+    const incoming = once<Message>(bobSocket, 'message:new');
+    const { message } = await carol.post<{ message: Message }>(`/api/chats/${dm.chat.id}/messages`, { text: 'Salut Bob' }, 201);
+    assert.equal((await incoming).id, message.id);
+    const carolSocket = await carol.socket();
+    const read = once<{ lastReadId: number; userId: number }>(carolSocket, 'read');
+    await bob.post(`/api/chats/${dm.chat.id}/read`, { messageId: message.id });
+    assert.deepEqual(await read, { chatId: dm.chat.id, userId: bob.me.id, lastReadId: message.id });
+    carolSocket.close();
+  } finally {
+    bobSocket.close();
+  }
+  await bob.post(`/api/users/${carol.me.id}/block`);
+  await carol.post(`/api/chats/${dm.chat.id}/messages`, { text: 'Tu es là ?' }, 403);
+  await bob.del(`/api/users/${carol.me.id}/block`);
+  await carol.post(`/api/chats/${dm.chat.id}/messages`, { text: 'Tu es là ?' }, 201);
+});
+
+test('uploads: allowed types only, stored under a safe name, served inertly', async () => {
+  const send = async (name: string, type: string, content: string) => {
+    const form = new FormData();
+    form.append('file', new Blob([content], { type }), name);
+    return fetch(base + '/api/upload', { method: 'POST', body: form, headers: { Cookie: alice.cookie } });
+  };
+  const bad = await send('evil.html', 'text/html', '<script>alert(1)</script>');
+  assert.equal(bad.status, 415);
+  const ok = await send('../../photo.html', 'image/png', '<script>alert(1)</script>');
+  assert.equal(ok.status, 201);
+  const file = (await ok.json()) as { url: string; kind: string };
+  assert.match(file.url, /^\/uploads\/[A-Za-z0-9_-]+\.png$/);
+  const served = await fetch(base + file.url);
+  assert.equal(served.headers.get('content-type'), 'image/png');
+  assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
+  // An attachment must point at our own upload store.
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Photos test' }, 201);
+  await alice.post(`/api/chats/${chat.id}/messages`, { attachment: { url: 'https://evil.example/x.png', name: 'x', size: 1, mime: 'image/png', kind: 'image' } }, 400);
+  await alice.post(`/api/chats/${chat.id}/messages`, { attachment: { ...file, name: 'photo.png', size: 10, mime: 'image/png' } }, 201);
+});
+
+test('moderation: reports are visible to platform admins only', async () => {
+  const { chat } = await alice.post<{ chat: Chat }>('/api/chats', { name: 'Modération test' }, 201);
+  await bob.post(`/api/chats/${chat.id}/join`);
+  const { message } = await bob.post<{ message: Message }>(`/api/chats/${chat.id}/messages`, { text: 'Achetez mes cryptos !!!' }, 201);
+  await alice.post('/api/reports', { targetType: 'message', targetId: message.id, reason: 'spam' }, 201);
+  await alice.get('/api/admin/reports', 403);
+  const { reports } = await admin.get<{ reports: { id: number; excerpt: string; status: string }[] }>('/api/admin/reports');
+  assert.equal(reports[0]!.excerpt, 'Achetez mes cryptos !!!');
+  await admin.post(`/api/admin/reports/${reports[0]!.id}`, { action: 'remove' });
+  const history = await alice.get<{ messages: Message[] }>(`/api/chats/${chat.id}/messages`);
+  assert.equal(history.messages.find((m) => m.id === message.id)!.deleted, true);
+});
+
+test('switching world joins the welcome groups of the new world', async () => {
+  const dave = await Client.register('Dave', { world: 'en', city: 'jerusalem', profile: 'legal' });
+  let { chats } = await dave.get<{ chats: Chat[] }>('/api/chats');
+  assert.ok(chats.every((c) => c.world === 'en'));
+  assert.ok(chats.some((c) => c.name === 'Legal Professionals'));
+  await dave.patch('/api/me', { world: 'es' });
+  ({ chats } = await dave.get<{ chats: Chat[] }>('/api/chats'));
+  assert.ok(chats.some((c) => c.world === 'es' && c.name === 'Jerusalén'));
+  assert.ok(chats.some((c) => c.world === 'en' && c.name === 'Jerusalem'));
+});

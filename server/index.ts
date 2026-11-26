@@ -1,0 +1,161 @@
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import compression from 'compression';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import helmet from 'helmet';
+import { loadUser } from './auth.ts';
+import { UPLOAD_DIR } from './db.ts';
+import { initRealtime } from './realtime.ts';
+import { router as authRoutes } from './routes/auth.ts';
+import { findInvite, router as chatRoutes } from './routes/chats.ts';
+import { router as communityRoutes } from './routes/community.ts';
+import { router as messageRoutes } from './routes/messages.ts';
+import { router as miscRoutes } from './routes/misc.ts';
+import { seed } from './seed.ts';
+import { HttpError, escapeHtml } from './util.ts';
+
+const PORT = Number(process.env.PORT || 3000);
+const PROD = process.env.NODE_ENV === 'production';
+const WEB_DIR = path.resolve(process.env.WEB_DIR || 'dist/web');
+
+export const app = express();
+app.disable('x-powered-by');
+// Behind a reverse proxy (Render, Fly, Railway, nginx…) so that req.secure / req.ip are right.
+if (process.env.TRUST_PROXY !== '0') app.set('trust proxy', 1);
+
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'img-src': ["'self'", 'data:', 'blob:'],
+        'media-src': ["'self'", 'blob:'],
+        'connect-src': ["'self'", 'ws:', 'wss:'],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'upgrade-insecure-requests': null,
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
+app.use(compression());
+app.use(express.json({ limit: '200kb' }));
+
+// ── uploads: served inertly, never as an active document ──
+app.use(
+  '/uploads',
+  express.static(UPLOAD_DIR, {
+    index: false,
+    maxAge: '365d',
+    immutable: true,
+    setHeaders(res, file) {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      if (!/\.(jpe?g|png|webp|gif|mp4|webm|mov|weba|ogg|mp3|m4a|wav)$/i.test(file)) {
+        res.setHeader('Content-Disposition', 'attachment');
+      }
+    },
+  }),
+);
+
+// ── API ──
+const api = express.Router();
+api.use(loadUser);
+api.get('/health', (_req, res) => res.json({ ok: true }));
+api.use(authRoutes, chatRoutes, messageRoutes, communityRoutes, miscRoutes);
+api.use((_req, _res, next) => next(new HttpError(404, 'not_found')));
+app.use('/api', api);
+
+// ── web app (production build) with link previews for invite links ──
+const indexFile = path.join(WEB_DIR, 'index.html');
+let indexHtml: string | null = null;
+function loadIndex(): string | null {
+  if (indexHtml && PROD) return indexHtml;
+  try {
+    indexHtml = fs.readFileSync(indexFile, 'utf8');
+  } catch {
+    indexHtml = null;
+  }
+  return indexHtml;
+}
+
+const OG_DEFAULT = {
+  title: 'OlimTalk — la messagerie ouverte des olim',
+  description:
+    'Public groups, communities, stories and an integration guide for olim in Israel — in French, English, Spanish and Russian.',
+};
+
+function renderIndex(req: Request, og: { title: string; description: string }): string | null {
+  const html = loadIndex();
+  if (!html) return null;
+  const origin = process.env.PUBLIC_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+  const tags = [
+    `<title>${escapeHtml(og.title)}</title>`,
+    `<meta name="description" content="${escapeHtml(og.description)}">`,
+    `<meta property="og:type" content="website">`,
+    `<meta property="og:site_name" content="OlimTalk">`,
+    `<meta property="og:title" content="${escapeHtml(og.title)}">`,
+    `<meta property="og:description" content="${escapeHtml(og.description)}">`,
+    `<meta property="og:url" content="${escapeHtml(origin + req.path)}">`,
+    `<meta property="og:image" content="${escapeHtml(origin)}/og.png">`,
+    `<meta property="og:image:width" content="1200">`,
+    `<meta property="og:image:height" content="630">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+  ].join('\n    ');
+  return html.replace(/<title>.*?<\/title>/s, tags);
+}
+
+app.use(express.static(WEB_DIR, { index: false, maxAge: PROD ? '1h' : 0 }));
+
+app.get('/join/:code', (req, res, next) => {
+  const found = findInvite(String(req.params.code));
+  let og = OG_DEFAULT;
+  if (found.chat) {
+    og = {
+      title: `${found.chat.emoji} ${found.chat.name} · OlimTalk`,
+      description: `${found.chat.member_count} 👥 — ${found.chat.description}`.slice(0, 280),
+    };
+  } else if (found.community) {
+    og = {
+      title: `${found.community.emoji} ${found.community.name} · OlimTalk`,
+      description: `${found.community.member_count} 👥 — ${found.community.description}`.slice(0, 280),
+    };
+  }
+  const html = renderIndex(req, og);
+  if (!html) return next();
+  res.type('html').send(html);
+});
+
+app.get(/^\/(?!api\/|uploads\/|socket\.io\/|assets\/).*/, (req, res, next) => {
+  if (req.method !== 'GET' || path.extname(req.path)) return next();
+  const html = renderIndex(req, OG_DEFAULT);
+  if (!html) return next();
+  res.type('html').send(html);
+});
+
+// ── errors ──
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof HttpError) {
+    res.status(err.status).json({ error: err.code, message: err.message });
+    return;
+  }
+  const e = err as { status?: number; type?: string; message?: string };
+  if (e?.type === 'entity.parse.failed' || e?.type === 'entity.too.large') {
+    res.status(e.status ?? 400).json({ error: 'invalid_body' });
+    return;
+  }
+  console.error(err);
+  res.status(500).json({ error: 'server_error' });
+});
+
+const created = seed();
+if (created) console.log(`[olimtalk] seeded ${created} built-in groups and communities`);
+
+export const server = http.createServer(app);
+initRealtime(server);
+
+if (process.env.OLIMTALK_NO_LISTEN !== '1') {
+  server.listen(PORT, () => console.log(`[olimtalk] listening on http://localhost:${PORT} (${PROD ? 'production' : 'development'})`));
+}
