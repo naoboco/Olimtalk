@@ -23,12 +23,12 @@ import { seal, sealJson } from '../../shared/e2e.ts';
 import { me, requireAuth } from '../auth.ts';
 import { UPLOAD_DIR, db, type EventRow, type UserRow } from '../db.ts';
 import { emitToUser } from '../realtime.ts';
-import { HttpError, bad, intParam, intQuery, now, parse, rateLimiter } from '../util.ts';
+import { HttpError, bad, configuredOrigin, intParam, intQuery, now, parse, rateLimiter } from '../util.ts';
 
 export const router = Router();
 
 const secretToken = customAlphabet('23456789abcdefghijkmnpqrstuvwxyz', 20);
-const publicOrigin = (req: Request) => process.env.PUBLIC_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+const publicOrigin = (req: Request) => configuredOrigin() || `${req.protocol}://${req.get('host')}`;
 
 // ───────────────────────── calendar feed (OlimTalk → any agenda) ─────────────────────────
 

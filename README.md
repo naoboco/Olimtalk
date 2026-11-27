@@ -176,8 +176,16 @@ Vérifications : `npm test` (API de bout en bout, chiffrement, connecteurs IA, a
 
 ## Mettre en ligne
 
-L'application est un seul serveur Node qui sert l'API, le temps réel et le site. Elle a besoin d'un
-**disque persistant** pour sa base de données et les fichiers envoyés.
+L'application est un seul serveur Node qui sert l'API, le temps réel et le site. **Sa base de données est
+embarquée** (un fichier SQLite) : il n'y a rien à relier, il lui faut seulement un **disque persistant** pour ce
+fichier et pour les fichiers envoyés.
+
+**Le plus simple** : [Render](https://render.com) → *New → Blueprint* → ce dépôt. Le fichier [`render.yaml`](render.yaml)
+déclare le serveur, son disque et les trois valeurs à renseigner ; le détail est dans
+[docs/PUBLIER.md](docs/PUBLIER.md). L'image du serveur est construite et essayée à chaque modification sur GitHub
+(*Actions → Mobile apps → Server image*).
+
+Ou à la main, chez n'importe quel hébergeur de conteneurs :
 
 ```bash
 docker build -t olimtalk .

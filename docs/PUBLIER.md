@@ -17,8 +17,34 @@ ligne avant tout le reste.
 
 ## 1. Mettre le serveur en ligne
 
-Voir la section « Mettre en ligne » du [README](../README.md). Il vous faut un nom de domaine en **HTTPS** et un
-disque persistant. Renseignez au minimum :
+**La base de données est déjà dans l'application.** C'est un fichier (SQLite) que le serveur crée et tient à jour
+lui-même : il n'y a pas de base à « relier ». Il faut un hébergeur qui fait tourner le serveur, en **HTTPS**, et lui
+donne un **disque persistant** où vivent la base et les fichiers envoyés.
+
+### Le chemin recommandé : Render
+
+Le fichier [`render.yaml`](../render.yaml) décrit tout ; il n'y a rien à installer.
+
+1. Créez un compte sur [render.com](https://render.com) en vous connectant avec GitHub.
+2. *New → Blueprint*, choisissez le dépôt OlimTalk.
+3. Renseignez les trois valeurs demandées : `ADMIN_EMAILS` (votre adresse e-mail), `LEGAL_OPERATOR` et
+   `LEGAL_CONTACT`. Validez : Render construit le serveur, lui attache un disque de 5 Go et lui donne une adresse en
+   HTTPS (`https://….onrender.com`).
+4. Ouvrez cette adresse : c'est OlimTalk. Créez-y votre compte avec l'adresse d'`ADMIN_EMAILS` pour être modérateur.
+5. Passez à l'étape 2 pour donner cette adresse aux applications.
+
+À savoir : le disque persistant demande une offre payante (serveur « starter » + disque facturé au Go ; vérifiez les
+tarifs de Render). Render prend un instantané du disque chaque jour. Chaque modification poussée sur GitHub
+redéploie le serveur, avec une courte coupure. Pour utiliser votre propre nom de domaine : *Settings → Custom
+Domains*, puis ajoutez `PUBLIC_URL=https://votre-domaine` dans *Environment*.
+
+Quand l'audience grandira (plusieurs milliers de personnes actives), il faudra passer à PostgreSQL et à un stockage
+de fichiers séparé : c'est un chantier à prévoir, pas un préalable.
+
+### Un autre hébergeur
+
+Tout hébergeur qui exécute une image Docker avec un volume convient (Railway, Fly.io, un VPS…) : voir la section
+« Mettre en ligne » du [README](../README.md). Renseignez au minimum :
 
 ```
 PUBLIC_URL=https://votre-domaine

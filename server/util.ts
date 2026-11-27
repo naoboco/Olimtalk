@@ -16,6 +16,12 @@ export const bad = (code: string, status = 400) => new HttpError(status, code);
 
 export const now = () => Date.now();
 
+/**
+ * The address people reach this server at, when it is known without looking at a request:
+ * the one set by whoever runs it, else the one the host announces (Render does).
+ */
+export const configuredOrigin = (): string | undefined => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').trim().replace(/\/$/, '') || undefined;
+
 const codeAlphabet = customAlphabet('23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ', 12);
 export const inviteCode = () => codeAlphabet();
 

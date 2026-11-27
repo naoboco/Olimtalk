@@ -1,0 +1,30 @@
+# Mise en ligne du serveur OlimTalk sur Render (https://render.com), en quelques gestes :
+#   Render → New → Blueprint → choisir ce dépôt → renseigner les trois valeurs demandées.
+#
+# Le serveur embarque sa base de données (un fichier SQLite) : elle vit, avec les photos et
+# fichiers envoyés, sur le disque persistant déclaré ci-dessous. Rien d'autre à brancher.
+services:
+  - type: web
+    name: olimtalk
+    runtime: docker
+    # Un disque persistant demande une offre payante ; « starter » suffit pour démarrer.
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /api/health
+    disk:
+      name: olimtalk-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      # Votre adresse e-mail : ce compte verra les signalements (Profil → Modération).
+      - key: ADMIN_EMAILS
+        sync: false
+      # Affichés sur les pages /privacy et /terms.
+      - key: LEGAL_OPERATOR
+        sync: false
+      - key: LEGAL_CONTACT
+        sync: false
+    # À ajouter plus tard dans Render → Environment, selon vos besoins (voir .env.example) :
+    #   PUBLIC_URL          quand vous branchez votre propre nom de domaine
+    #   ANTHROPIC_API_KEY   pour la traduction automatique
+    #   MAIL_DOMAIN, INBOUND_MAIL_SECRET   pour « Ma boîte mail »

@@ -17,7 +17,7 @@ import { router as miscRoutes } from './routes/misc.ts';
 import { router as translateRoutes } from './routes/translate.ts';
 import { seed } from './seed.ts';
 import { startSmtp } from './smtp.ts';
-import { HttpError, escapeHtml } from './util.ts';
+import { HttpError, configuredOrigin, escapeHtml } from './util.ts';
 
 const PORT = Number(process.env.PORT || 3000);
 const PROD = process.env.NODE_ENV === 'production';
@@ -127,7 +127,7 @@ const OG_DEFAULT = {
 function renderIndex(req: Request, og: { title: string; description: string }): string | null {
   const html = loadIndex();
   if (!html) return null;
-  const origin = process.env.PUBLIC_URL?.replace(/\/$/, '') || `${req.protocol}://${req.get('host')}`;
+  const origin = configuredOrigin() || `${req.protocol}://${req.get('host')}`;
   const tags = [
     `<title>${escapeHtml(og.title)}</title>`,
     `<meta name="description" content="${escapeHtml(og.description)}">`,

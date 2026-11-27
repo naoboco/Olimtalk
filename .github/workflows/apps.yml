@@ -10,7 +10,10 @@ on:
       - 'android/**'
       - 'ios/**'
       - 'web/**'
+      - 'server/**'
       - 'shared/**'
+      - 'Dockerfile'
+      - '.dockerignore'
       - 'capacitor.config.ts'
       - 'package.json'
       - 'package-lock.json'
@@ -39,6 +42,28 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  server-image:
+    name: Server image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # What a host such as Render does with this repository.
+      - name: Build the server image
+        run: docker build -t olimtalk .
+      - name: Start it, check that it answers, and that its data survives a restart
+        run: |
+          docker run -d --name olimtalk -p 3000:3000 -v olimtalk-data:/data olimtalk
+          wait_up() { for i in $(seq 1 40); do curl -fsS -o /dev/null http://localhost:3000/api/health && return 0; sleep 1; done; return 1; }
+          wait_up
+          curl -fsS -o /dev/null http://localhost:3000/
+          curl -fsS -H 'Content-Type: application/json' -d '{"email":"ci@example.com","password":"password123","name":"CI","world":"fr"}' http://localhost:3000/api/auth/register > /dev/null
+          docker restart olimtalk
+          wait_up
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"email":"ci@example.com","password":"password123","name":"CI","world":"fr"}' http://localhost:3000/api/auth/register)" = 409
+      - name: Server output
+        if: always()
+        run: docker logs olimtalk | tail -20
 
   android:
     name: Android app
