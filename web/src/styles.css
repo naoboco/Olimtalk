@@ -3846,3 +3846,18 @@ button.tr-note:hover {
 .modal-body > .section-title.spaced {
   margin-top: 20px;
 }
+.ai-account-on {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 10px;
+  color: var(--ok);
+  font-weight: 650;
+  font-size: 14px;
+}
+.modal-body > .btn.block + .section-title.spaced {
+  margin-top: 22px;
+}
+.modal-body > p + .btn.block {
+  margin-top: 10px;
+}

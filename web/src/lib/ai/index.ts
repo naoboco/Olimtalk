@@ -17,6 +17,8 @@ export const PROVIDERS: Record<AiSettings['provider'], ProviderInfo> = {
   openai: { label: 'ChatGPT (OpenAI)', site: 'https://platform.openai.com', defaultModel: '' },
   gemini: { label: 'Gemini (Google)', site: 'https://aistudio.google.com', defaultModel: '' },
   mistral: { label: 'Mistral', site: 'https://console.mistral.ai', defaultModel: '' },
+  // Usually connected by signing in (see openrouter.ts); a key pasted by hand works too.
+  openrouter: { label: 'OpenRouter', site: 'https://openrouter.ai', defaultModel: 'openrouter/auto' },
   custom: { label: 'OpenAI-compatible', site: '', defaultModel: '', needsBaseUrl: true },
 };
 

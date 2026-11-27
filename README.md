@@ -104,6 +104,11 @@ Pas encore traduits : les sondages, les fiches d'événements, les stories et le
 
 Chacun branche ses propres comptes, quel que soit le fournisseur ; rien n'est imposé.
 
+- **Mon IA, en me connectant à mon compte** — « Se connecter avec OpenRouter » : la personne se connecte sur la page
+  d'OpenRouter (un seul compte pour les modèles d'OpenAI, Anthropic, Google, Mistral…), OlimTalk reçoit l'accès
+  automatiquement, sans clé à copier, et **les réponses s'affichent dans OlimTalk**. L'accès reçu est enregistré
+  chiffré par le mot de passe de la personne ; l'usage est facturé sur son compte OpenRouter. Sur le téléphone, la
+  connexion se fait dans le navigateur puis revient dans l'application.
 - **Mon IA, sans clé (mode relais)** — la personne choisit l'application d'IA qu'elle utilise déjà (ChatGPT, Claude,
   Gemini, Le Chat, Copilot, ou « Autre application »). Pour traduire ou expliquer un message, résumer un groupe,
   comprendre un e-mail ou poser une question, OlimTalk rédige la demande, la copie et ouvre cette application avec
@@ -125,10 +130,9 @@ Chacun branche ses propres comptes, quel que soit le fournisseur ; rien n'est im
   `MAIL_DOMAIN`, puis soit `SMTP_PORT` avec un enregistrement MX vers le serveur, soit un service de réception qui
   poste les messages sur `/api/inbound/email` (voir [`.env.example`](.env.example)).
 
-Deux pistes pour brancher une IA sans clé **et** avec des réponses dans OlimTalk, non incluses : « Se connecter avec
-ChatGPT » (OpenAI réserve pour l'instant l'usage de l'abonnement aux applications partenaires, sur candidature) et la
-connexion en un clic à OpenRouter (compte prépayé donnant accès à la plupart des modèles). Anthropic n'autorise pas
-l'usage d'un abonnement Claude dans une application tierce : pour Claude, c'est le mode relais ou une clé.
+Se connecter directement avec son **abonnement ChatGPT ou Claude** n'est pas inclus : OpenAI réserve pour l'instant
+l'usage de l'abonnement aux applications partenaires, sur candidature, et Anthropic n'autorise pas l'usage d'un
+abonnement Claude dans une application tierce. D'ici là : le compte OpenRouter, le mode relais, ou une clé.
 (État en novembre 2026, d'après la presse spécialisée : à vérifier auprès de chaque fournisseur avant de s'engager.)
 
 La connexion en un clic « Se connecter avec Google / Microsoft » (lecture directe de la boîte et de l'agenda) n'est
@@ -205,7 +209,8 @@ web/src/           interface React (Vite), commune au site et aux applications
   locales/         traductions fr / en / es / ru
   content/         contenu du guide d'intégration et liens officiels
   lib/e2ee.ts      clés sur l'appareil, messages et fichiers chiffrés, coffre des connexions
-  lib/ai/          un connecteur par fournisseur d'IA (SDK officiel pour Claude) ; relay.ts : mode relais, sans clé
+  lib/ai/          un connecteur par fournisseur d'IA (SDK officiel pour Claude) ; relay.ts : mode relais, sans clé ;
+                   openrouter.ts : connexion à son compte (OAuth PKCE)
   lib/translate.ts traduction automatique : quoi traduire, par qui, et où le résultat est gardé
   lib/platform.ts  site ou application : adresse du serveur, session, liens externes
   lib/native.ts    pont avec le téléphone : bouton retour, liens d'invitation, barres système

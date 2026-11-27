@@ -21,6 +21,7 @@ const GuidePage = lazy(() => import('./pages/Guide.tsx'));
 // The assistant and the mailbox are optional connections: loaded when opened.
 const AssistantPage = lazy(() => import('./pages/Assistant.tsx'));
 const MailPage = lazy(() => import('./pages/Mail.tsx'));
+const ConnectAiPage = lazy(() => import('./pages/ConnectAi.tsx'));
 
 const TABS: { to: string; icon: IconName; label: Key }[] = [
   { to: '/chats', icon: 'chat', label: 'tab_chats' },
@@ -141,6 +142,15 @@ export function App() {
       <Routes>
         <Route path="/welcome" element={<Welcome />} />
         <Route path="/join/:code" element={<JoinPage />} />
+        {/* The way back from signing in to one's AI account. */}
+        <Route
+          path="/connect/openrouter/*"
+          element={
+            <Suspense fallback={null}>
+              <ConnectAiPage />
+            </Suspense>
+          }
+        />
         <Route element={<RequireAuth />}>
           <Route path="/chats" element={<ChatsPage />} />
           <Route path="/chats/:chatId" element={<ChatsPage />} />

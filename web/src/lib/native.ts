@@ -4,6 +4,7 @@ import { App } from '@capacitor/app';
 import { SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { dismissTop } from '../components/ui.tsx';
+import { pathFromLink } from './links.ts';
 import { IS_NATIVE, PLATFORM } from './platform.ts';
 import { useStore } from './store.ts';
 
@@ -13,23 +14,6 @@ export function syncSystemBars() {
   const theme = useStore.getState().theme;
   const dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   void SystemBars.setStyle({ style: dark ? SystemBarsStyle.Dark : SystemBarsStyle.Light }).catch(() => undefined);
-}
-
-/**
- * Translate a shared OlimTalk link into a screen of the app:
- *   https://your-domain/join/abc  →  /join/abc
- *   olimtalk://join/abc           →  /join/abc
- */
-export function pathFromLink(link: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(link);
-  } catch {
-    return null;
-  }
-  const path = url.protocol === 'http:' || url.protocol === 'https:' ? url.pathname : `/${url.host}${url.pathname}`;
-  const match = /^\/join\/([A-Za-z0-9_-]{1,80})\/?$/.exec(path);
-  return match ? `/join/${match[1]}` : null;
 }
 
 /** Reveal the interface once there is something to show. */

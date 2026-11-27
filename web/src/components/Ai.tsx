@@ -1,11 +1,12 @@
 // "Mon IA": the person plugs in the assistant of their choice with their own key.
 import { useEffect, useRef, useState } from 'react';
 import { AiError, PROVIDERS, complete, isConfigured, listModels, type AiModel, type AiRequest, type AiSettings } from '../lib/ai/index.ts';
+import { authorizationUrl, createChallenge, rememberVerifier } from '../lib/ai/openrouter.ts';
 import { sendToAiApp } from '../lib/ai/relay-app.ts';
 import { AI_APPS, AI_APP_ORDER, relayRequest, type AiAppId } from '../lib/ai/relay.ts';
 import { richText } from '../lib/format.tsx';
 import { useT, type Key, type T } from '../lib/i18n.ts';
-import { IS_NATIVE } from '../lib/platform.ts';
+import { IS_NATIVE, PUBLIC_ORIGIN, openExternal } from '../lib/platform.ts';
 import { copyText } from '../lib/share.ts';
 import { useStore } from '../lib/store.ts';
 import { UnlockDialog } from './dialogs.tsx';
@@ -43,7 +44,22 @@ export async function relayToAiApp(app: AiAppId, template: Key, text: string, t:
   useStore.getState().toast(result === 'opened' ? t('ai_relay_copied', { app: aiAppName(app, t) }) : t('ai_relay_copied_other'));
 }
 
-const PROVIDER_ORDER: AiSettings['provider'][] = ['anthropic', 'openai', 'gemini', 'mistral', 'custom'];
+/**
+ * "Sign in with my account": the person signs in on OpenRouter's own page and comes back
+ * with an access tied to their account (see lib/ai/openrouter.ts and pages/ConnectAi.tsx).
+ */
+export async function startAccountSignIn() {
+  const { verifier, challenge } = await createChallenge();
+  rememberVerifier(verifier);
+  if (IS_NATIVE) {
+    // The phone's browser handles the sign-in; a page of the site then hands the result back to the app.
+    await openExternal(authorizationUrl(`${PUBLIC_ORIGIN}/connect/openrouter/app`, challenge));
+  } else {
+    window.location.assign(authorizationUrl(`${window.location.origin}/connect/openrouter`, challenge));
+  }
+}
+
+const PROVIDER_ORDER: AiSettings['provider'][] = ['anthropic', 'openai', 'gemini', 'mistral', 'openrouter', 'custom'];
 
 export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -125,7 +141,31 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
         </>
       }
     >
-      <div className="section-title">{t('ai_app_title')}</div>
+      {e2e !== 'ready' && (
+        <button type="button" className="banner error as-button" onClick={() => setUnlock(true)}>
+          {t('e2e_locked_banner')}
+        </button>
+      )}
+      <div className="section-title">{t('ai_account_title')}</div>
+      <p className="muted small">{t('ai_account_text')}</p>
+      {saved?.provider === 'openrouter' && (
+        <p className="ai-account-on">
+          <Icon name="check" size={16} /> {t('ai_account_connected')}
+        </p>
+      )}
+      <button
+        type="button"
+        className={`btn block ${saved?.provider === 'openrouter' ? 'soft' : 'primary'}`}
+        disabled={busy || e2e !== 'ready'}
+        onClick={() => {
+          setBusy(true);
+          void startAccountSignIn().catch((e) => (error(e), setBusy(false)));
+        }}
+      >
+        <Icon name="external" size={18} /> {t(saved?.provider === 'openrouter' ? 'ai_account_reconnect' : 'ai_account_connect')}
+      </button>
+
+      <div className="section-title spaced">{t('ai_app_title')}</div>
       <p className="muted small">{t('ai_app_text')}</p>
       <div className="chips wrap ai-apps">
         {AI_APP_ORDER.map((app) => (
@@ -141,11 +181,6 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
         <Icon name="shield" size={18} />
         <span>{t('ai_privacy')}</span>
       </div>
-      {e2e !== 'ready' && (
-        <button type="button" className="banner error as-button" onClick={() => setUnlock(true)}>
-          {t('e2e_locked_banner')}
-        </button>
-      )}
       <div className="field">
         <span className="field-label">{t('ai_provider')}</span>
         <div className="chips wrap">

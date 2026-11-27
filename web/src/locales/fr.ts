@@ -611,4 +611,18 @@ export const fr = {
   relay_explain: 'Je vis en Israël depuis peu. Explique-moi simplement, en français, ce message que j’ai reçu : de quoi il s’agit, ce qu’on me demande, les dates, montants ou références, et ce que je dois faire. Traduis les mots en hébreu importants.\n\n{text}',
   relay_summarize: 'Résume en français cette discussion de groupe pour quelqu’un qui était absent : sujets principaux, décisions, dates, lieux et questions restées sans réponse.\n\n{text}',
   relay_ask: '{text}',
+
+  // my AI by signing in to my account
+  ai_account_title: 'Me connecter à mon compte',
+  ai_account_text: 'Avec OpenRouter, un seul compte donne accès aux modèles de ChatGPT, Claude, Gemini, Mistral et d’autres. Vous vous connectez sur la page d’OpenRouter, OlimTalk reçoit l’accès automatiquement et les réponses s’affichent ici. L’usage est facturé sur votre compte OpenRouter.',
+  ai_account_connect: 'Se connecter avec OpenRouter',
+  ai_account_reconnect: 'Me reconnecter',
+  ai_account_connected: 'Votre compte OpenRouter est connecté',
+  ai_connecting: 'Connexion à votre compte…',
+  ai_connect_failed: 'La connexion à votre compte n’a pas abouti',
+  ai_connect_expired: 'Cette tentative a expiré ou a été lancée depuis un autre appareil. Recommencez depuis « Mon IA ».',
+  ai_connect_retry: 'Recommencez depuis « Mon IA ».',
+  ai_connect_back_title: 'Presque terminé',
+  ai_connect_back_text: 'Votre compte est autorisé. Revenez dans l’application OlimTalk pour terminer.',
+  ai_connect_login: 'Connectez-vous à OlimTalk pour terminer la connexion de votre compte.',
 };

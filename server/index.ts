@@ -23,7 +23,13 @@ const PORT = Number(process.env.PORT || 3000);
 const PROD = process.env.NODE_ENV === 'production';
 const WEB_DIR = path.resolve(process.env.WEB_DIR || 'dist/web');
 
-const AI_HOSTS = ['https://api.anthropic.com', 'https://api.openai.com', 'https://generativelanguage.googleapis.com', 'https://api.mistral.ai'];
+const AI_HOSTS = [
+  'https://api.anthropic.com',
+  'https://api.openai.com',
+  'https://generativelanguage.googleapis.com',
+  'https://api.mistral.ai',
+  'https://openrouter.ai',
+];
 
 export const app = express();
 app.disable('x-powered-by');

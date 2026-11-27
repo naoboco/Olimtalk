@@ -5,10 +5,12 @@ import { AiError, errorForStatus, type AiModel, type AiRequest, type AiSettings 
 
 export const OPENAI_BASE = 'https://api.openai.com/v1';
 export const MISTRAL_BASE = 'https://api.mistral.ai/v1';
+export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
 export function baseUrlOf(settings: AiSettings): string {
   if (settings.provider === 'openai') return OPENAI_BASE;
   if (settings.provider === 'mistral') return MISTRAL_BASE;
+  if (settings.provider === 'openrouter') return OPENROUTER_BASE;
   return (settings.baseUrl ?? '').trim().replace(/\/+$/, '');
 }
 

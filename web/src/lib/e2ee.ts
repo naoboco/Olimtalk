@@ -181,7 +181,7 @@ export interface CalendarLink {
 }
 
 export interface AiSettings {
-  provider: 'anthropic' | 'openai' | 'gemini' | 'mistral' | 'custom';
+  provider: 'anthropic' | 'openai' | 'gemini' | 'mistral' | 'openrouter' | 'custom';
   apiKey: string;
   model: string;
   /** Largest reply the chosen model accepts, when the provider told us. */
