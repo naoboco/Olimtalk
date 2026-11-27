@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { unseal, unsealJson } from '../../../shared/e2e.ts';
-import { AiResultDialog, useAi } from '../components/Ai.tsx';
+import { AiResultDialog, relayToAiApp, useAi, useAiApp } from '../components/Ai.tsx';
 import { UnlockDialog } from '../components/dialogs.tsx';
 import { Icon } from '../components/icons.tsx';
 import { ChatAvatar, Empty, IconButton, Modal, Spinner } from '../components/ui.tsx';
@@ -105,6 +105,7 @@ export default function MailPage() {
   const chats = useStore((s) => s.chats);
   const { error, toast, send } = useStore.getState();
   const ai = useAi();
+  const aiApp = useAiApp();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [open, setOpen] = useState<{ row: Row; body: Body | null } | null>(null);
   const [settings, setSettings] = useState(false);
@@ -271,12 +272,12 @@ export default function MailPage() {
               <div className="mail-from muted small">
                 {body.from.name} &lt;{body.from.address}&gt; · {formatListTime(body.date, lang, t)}
               </div>
-              {ai && (
+              {(ai || aiApp) && (
                 <div className="info-actions">
-                  <button type="button" className="btn small primary" onClick={() => setAiTask('explain')}>
+                  <button type="button" className="btn small primary" onClick={() => (ai ? setAiTask('explain') : aiApp && void relayToAiApp(aiApp, 'relay_explain', asText, t))}>
                     <Icon name="sparkles" size={16} /> {t('ai_explain')}
                   </button>
-                  <button type="button" className="btn small soft" onClick={() => setAiTask('translate')}>
+                  <button type="button" className="btn small soft" onClick={() => (ai ? setAiTask('translate') : aiApp && void relayToAiApp(aiApp, 'relay_translate', asText, t))}>
                     <Icon name="globe" size={16} /> {t('ai_translate')}
                   </button>
                 </div>

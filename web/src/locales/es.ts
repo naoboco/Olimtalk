@@ -594,4 +594,22 @@ export const es: Dict = {
   err_private_group: 'Este grupo es privado: solo sus miembros pueden leerlo.',
   err_request_not_found: 'Esta solicitud ya no existe.',
   err_must_stay_public: 'Este grupo debe seguir siendo público.',
+
+  // my AI without a key (relay mode)
+  ai_app_title: 'Sin clave: mi aplicación de IA',
+  ai_app_text: 'OlimTalk prepara la solicitud y abre la aplicación que ya usas, con tu propia cuenta. Sin clave ni coste adicional; la respuesta se lee en esa aplicación.',
+  ai_app_other: 'Otra aplicación',
+  ai_app_saved: 'Tus solicitudes se abrirán en {app}',
+  ai_app_connected: 'Sin clave: {app}',
+  ai_app_assistant: 'Tu pregunta se abrirá en {app}, con tu propia cuenta.',
+  ai_open_app: 'Abrir en {app}',
+  ai_relay_copied: 'Solicitud copiada. Pégala en {app} si no aparece.',
+  ai_relay_copied_other: 'Solicitud copiada: pégala en tu aplicación de IA.',
+  ai_api_title: 'Con una clave API: respuestas dentro de OlimTalk',
+  ai_api_text: 'Necesaria para leer aquí las respuestas, reescribir tus mensajes y traducir automáticamente con tu IA.',
+  tr_private_ask_app: 'O bien, sin enviar nada a OlimTalk: abre este mensaje en tu aplicación de IA.',
+  relay_translate: 'Traduce este mensaje al español. Responde solo con la traducción.\n\n{text}',
+  relay_explain: 'Vivo en Israel desde hace poco. Explícame de forma sencilla, en español, este mensaje que he recibido: de qué trata, qué se me pide, las fechas, importes o referencias, y qué debo hacer. Traduce las palabras importantes en hebreo.\n\n{text}',
+  relay_summarize: 'Resume en español este chat de grupo para alguien que estaba ausente: temas principales, decisiones, fechas, lugares y preguntas sin responder.\n\n{text}',
+  relay_ask: '{text}',
 };

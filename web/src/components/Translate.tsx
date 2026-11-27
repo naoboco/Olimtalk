@@ -7,7 +7,7 @@ import { api } from '../lib/api.ts';
 import { useT } from '../lib/i18n.ts';
 import { useStore } from '../lib/store.ts';
 import { translateNow, type Translatable } from '../lib/translate.ts';
-import { useAi } from './Ai.tsx';
+import { aiAppName, relayToAiApp, useAi, useAiApp } from './Ai.tsx';
 import { Icon } from './icons.tsx';
 import { Modal } from './ui.tsx';
 
@@ -93,6 +93,7 @@ export function TranslationSettings() {
 export function PrivateTranslationDialog({ message, onClose }: { message: Translatable; onClose: () => void }) {
   const t = useT();
   const navigate = useNavigate();
+  const aiApp = useAiApp();
   const { toast } = useStore.getState();
   const enable = async () => {
     await savePrefs({ translatePrivate: true });
@@ -119,10 +120,21 @@ export function PrivateTranslationDialog({ message, onClose }: { message: Transl
         <Icon name="shield" size={18} />
         <span>{t('tr_private_ask_text')}</span>
       </div>
-      <p className="muted small spaced">{t('tr_private_ask_alt')}</p>
-      <button type="button" className="btn soft block" onClick={() => (onClose(), navigate('/assistant'))}>
-        <Icon name="sparkles" size={18} /> {t('ai_connect')}
-      </button>
+      {aiApp ? (
+        <>
+          <p className="muted small spaced">{t('tr_private_ask_app')}</p>
+          <button type="button" className="btn soft block" onClick={() => (onClose(), void relayToAiApp(aiApp, 'relay_translate', message.text, t))}>
+            <Icon name="sparkles" size={18} /> {t('ai_open_app', { app: aiAppName(aiApp, t) })}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="muted small spaced">{t('tr_private_ask_alt')}</p>
+          <button type="button" className="btn soft block" onClick={() => (onClose(), navigate('/assistant'))}>
+            <Icon name="sparkles" size={18} /> {t('ai_connect')}
+          </button>
+        </>
+      )}
     </Modal>
   );
 }

@@ -39,6 +39,8 @@ import {
 } from './e2ee.ts';
 import { detectLang, translate, type Key } from './i18n.ts';
 import { API_ORIGIN, TOKEN_MODE, getToken, loadToken, saveToken } from './platform.ts';
+import { loadAiApp, saveAiApp } from './ai/relay-app.ts';
+import type { AiAppId } from './ai/relay.ts';
 import { autoTranslate, clearTranslationCache, refreshTranslations, type Translation } from './translate.ts';
 import type { SharePayload } from './share.ts';
 
@@ -78,6 +80,9 @@ interface State {
   e2e: 'ready' | 'locked';
   /** The person's own AI and calendars, decrypted from their vault. */
   ai: AiSettings | null;
+  /** Relay mode: the AI application this person uses on this device, no key involved. */
+  aiApp: AiAppId | null;
+  setAiApp: (app: AiAppId | null) => void;
   calendars: CalendarLink[];
   mailUnread: number;
   /** Contacts (by user id) whose security code changed and has not been looked at yet. */
@@ -234,6 +239,11 @@ export const useStore = create<State>((set, get) => ({
   config: null,
   e2e: 'locked',
   ai: null,
+  aiApp: loadAiApp(),
+  setAiApp(app) {
+    saveAiApp(app);
+    set({ aiApp: app });
+  },
   calendars: [],
   mailUnread: 0,
   keyAlerts: {},

@@ -1,6 +1,8 @@
 // "Mon IA": the person plugs in the assistant of their choice with their own key.
 import { useEffect, useRef, useState } from 'react';
 import { AiError, PROVIDERS, complete, isConfigured, listModels, type AiModel, type AiRequest, type AiSettings } from '../lib/ai/index.ts';
+import { sendToAiApp } from '../lib/ai/relay-app.ts';
+import { AI_APPS, AI_APP_ORDER, relayRequest, type AiAppId } from '../lib/ai/relay.ts';
 import { richText } from '../lib/format.tsx';
 import { useT, type Key, type T } from '../lib/i18n.ts';
 import { IS_NATIVE } from '../lib/platform.ts';
@@ -24,13 +26,36 @@ export function useAi(): AiSettings | null {
   return isConfigured(ai ?? undefined) ? ai : null;
 }
 
+/** Relay mode: the AI application the person chose to use, without any key. */
+export function useAiApp(): AiAppId | null {
+  return useStore((s) => s.aiApp);
+}
+
+export const aiAppName = (app: AiAppId, t: T) => (app === 'other' ? t('ai_app_other') : AI_APPS[app].label);
+
+/**
+ * Relay mode: write the request, copy it and open the person's own AI application.
+ * `template` is one of the "relay_…" texts, in which {text} is replaced.
+ */
+export async function relayToAiApp(app: AiAppId, template: Key, text: string, t: T) {
+  const result = await sendToAiApp(app, relayRequest(t(template), text));
+  if (result === 'shared') return;
+  useStore.getState().toast(result === 'opened' ? t('ai_relay_copied', { app: aiAppName(app, t) }) : t('ai_relay_copied_other'));
+}
+
 const PROVIDER_ORDER: AiSettings['provider'][] = ['anthropic', 'openai', 'gemini', 'mistral', 'custom'];
 
 export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const saved = useStore((s) => s.ai);
   const e2e = useStore((s) => s.e2e);
-  const { saveVault, toast, error } = useStore.getState();
+  const aiApp = useAiApp();
+  const { saveVault, toast, error, setAiApp } = useStore.getState();
+  const chooseApp = (app: AiAppId) => {
+    const next = aiApp === app ? null : app;
+    setAiApp(next);
+    if (next) toast(t('ai_app_saved', { app: aiAppName(next, t) }));
+  };
   const [provider, setProvider] = useState<AiSettings['provider']>(saved?.provider ?? 'anthropic');
   const [apiKey, setApiKey] = useState(saved?.apiKey ?? '');
   const [baseUrl, setBaseUrl] = useState(saved?.baseUrl ?? '');
@@ -91,12 +116,27 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
               {t('ai_disconnect')}
             </button>
           )}
+          <button type="button" className="btn ghost" onClick={onClose}>
+            {t('close')}
+          </button>
           <button type="button" className="btn primary" onClick={() => void save(draft)} disabled={busy || e2e !== 'ready' || !isConfigured(draft)}>
             {t('save')}
           </button>
         </>
       }
     >
+      <div className="section-title">{t('ai_app_title')}</div>
+      <p className="muted small">{t('ai_app_text')}</p>
+      <div className="chips wrap ai-apps">
+        {AI_APP_ORDER.map((app) => (
+          <button key={app} type="button" className={`chip ${aiApp === app ? 'active' : ''}`} aria-pressed={aiApp === app} onClick={() => chooseApp(app)}>
+            {aiAppName(app, t)}
+          </button>
+        ))}
+      </div>
+
+      <div className="section-title spaced">{t('ai_api_title')}</div>
+      <p className="muted small">{t('ai_api_text')}</p>
       <div className="notice">
         <Icon name="shield" size={18} />
         <span>{t('ai_privacy')}</span>

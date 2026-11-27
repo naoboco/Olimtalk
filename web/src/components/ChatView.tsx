@@ -8,7 +8,7 @@ import { useT } from '../lib/i18n.ts';
 import { copyText, inviteUrl } from '../lib/share.ts';
 import { getSocket, isClosedTo, useStore, type ClientMessage } from '../lib/store.ts';
 import { autoTranslate, translateNow, translationOf } from '../lib/translate.ts';
-import { AiResultDialog, useAi } from './Ai.tsx';
+import { AiResultDialog, AiSettingsDialog, relayToAiApp, useAi, useAiApp } from './Ai.tsx';
 import { ChatInfo } from './ChatInfo.tsx';
 import { Composer } from './Composer.tsx';
 import { Confirm, EventDialog, ForwardDialog, PollDialog, ReportDialog, UnlockDialog } from './dialogs.tsx';
@@ -33,6 +33,15 @@ export function ChatView({ chatId }: { chatId: number }) {
   const [aiTask, setAiTask] = useState<{ title: string; request: AiRequest; source?: string } | null>(null);
   const [unlocking, setUnlocking] = useState(false);
   const [translateAsk, setTranslateAsk] = useState<ClientMessage | null>(null);
+  const aiApp = useAiApp();
+  const [aiSettings, setAiSettings] = useState(false);
+  // With a key the answer comes back here; in relay mode the request opens in the person's
+  // own AI application; with neither, show how to plug one in.
+  const askAi = (template: 'relay_explain' | 'relay_summarize', text: string, task: { title: string; request: AiRequest; source?: string }) => {
+    if (ai) setAiTask(task);
+    else if (aiApp) void relayToAiApp(aiApp, template, text, t);
+    else setAiSettings(true);
+  };
   const { loadMessages, markRead, setActiveChat, fetchChat, upsertChat, patchMessage, hideMessage, error, toast, openShare, send } = useStore.getState();
 
   const [missing, setMissing] = useState(false);
@@ -342,14 +351,18 @@ export function ChatView({ chatId }: { chatId: number }) {
             if (result === 'consent') setTranslateAsk(m);
             else if (result === 'same') toast(t('tr_same'));
             else if (result === 'failed') toast(t('tr_failed'), 'error');
-            else if (result === 'unavailable') toast(t('tr_unavailable'), 'error');
+            else if (result === 'unavailable') {
+              // Nothing can translate inside OlimTalk: hand it to the person's own AI application.
+              if (aiApp) void relayToAiApp(aiApp, 'relay_translate', m.text, t);
+              else setAiSettings(true);
+            }
           }),
       },
       {
         icon: 'sparkles',
         label: t('ai_explain'),
-        hidden: !ai || !m.text,
-        onClick: () => setAiTask({ title: t('ai_explain'), request: explainRequest(m.text, lang), source: m.text }),
+        hidden: !m.text || m.type === 'event' || m.type === 'poll',
+        onClick: () => askAi('relay_explain', m.text, { title: t('ai_explain'), request: explainRequest(m.text, lang), source: m.text }),
       },
       {
         icon: 'share',
@@ -604,19 +617,15 @@ export function ChatView({ chatId }: { chatId: number }) {
             {
               icon: 'sparkles',
               label: t('ai_summarize'),
-              hidden: !ai || visible.filter((m) => m.text).length < 3,
-              onClick: () =>
-                setAiTask({
-                  title: t('ai_summarize'),
-                  request: summarizeRequest(
-                    visible
-                      .filter((m) => m.text && m.type !== 'system' && !m.deleted)
-                      .slice(-80)
-                      .map((m) => `${m.user.name}: ${m.text}`)
-                      .join('\n'),
-                    lang,
-                  ),
-                }),
+              hidden: visible.filter((m) => m.text).length < 3,
+              onClick: () => {
+                const transcript = visible
+                  .filter((m) => m.text && m.type !== 'system' && !m.deleted)
+                  .slice(-80)
+                  .map((m) => `${m.user.name}: ${m.text}`)
+                  .join('\n');
+                askAi('relay_summarize', transcript, { title: t('ai_summarize'), request: summarizeRequest(transcript, lang) });
+              },
             },
             { icon: chat.muted ? 'bell' : 'bellOff', label: chat.muted ? t('unmute') : t('mute'), onClick: () => void setPref({ muted: !chat.muted }), hidden: !chat.isMember },
             { icon: 'pin', label: chat.pinned ? t('unpin_chat') : t('pin_chat'), onClick: () => void setPref({ pinned: !chat.pinned }), hidden: !chat.isMember },
@@ -658,6 +667,7 @@ export function ChatView({ chatId }: { chatId: number }) {
       {aiTask && <AiResultDialog title={aiTask.title} request={aiTask.request} source={aiTask.source} onClose={() => setAiTask(null)} />}
       {unlocking && <UnlockDialog onClose={() => setUnlocking(false)} />}
       {translateAsk && <PrivateTranslationDialog message={translateAsk} onClose={() => setTranslateAsk(null)} />}
+      {aiSettings && <AiSettingsDialog onClose={() => setAiSettings(false)} />}
       {dialog === 'poll' && <PollDialog chatId={chat.id} onClose={() => setDialog(null)} />}
       {dialog === 'event' && <EventDialog chatId={chat.id} onClose={() => setDialog(null)} />}
       {confirmDelete && (

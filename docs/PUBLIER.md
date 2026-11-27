@@ -121,6 +121,11 @@ prendre votre nom de domaine à l'envers (`il.co.olimtalk`, par exemple). Pour l
   domaine dans les deux projets natifs.
 - **Connexion par numéro de téléphone** (prestataire d'envoi requis). Pour le mot de passe oublié, voir le README :
   le mot de passe verrouille les messages privés, une clé de secours serait la bonne réponse.
+- **« Se connecter avec ChatGPT »** : OpenAI permet à ses abonnés d'utiliser leur forfait dans des applications
+  partenaires, mais l'accès se fait sur candidature auprès d'OpenAI. Si OlimTalk est accepté, les réponses de l'IA
+  pourront s'afficher dans l'application sans clé. En attendant, le mode relais (ouvrir sa propre application d'IA)
+  fonctionne pour tout le monde. Anthropic n'autorise pas cet usage pour les abonnements Claude. (État en novembre
+  2026, d'après la presse spécialisée : à vérifier auprès de chaque fournisseur.)
 - **« Se connecter avec Google / Microsoft »** pour lire directement la boîte mail et l'agenda : cela demande
   d'enregistrer l'application auprès de Google et de Microsoft (et de passer leur validation de sécurité pour l'accès
   aux e-mails). En attendant, l'agenda passe par le lien `.ics` et la boîte mail par l'adresse de transfert, qui

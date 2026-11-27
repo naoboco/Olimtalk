@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CITIES, PROFILE_EMOJI, cityName } from '../../../shared/data.ts';
 import { PROFILES, type Me, type Message, type ProfileType, type Report, type UserPublic } from '../../../shared/types.ts';
-import { AiSettingsDialog, useAi } from '../components/Ai.tsx';
+import { AiSettingsDialog, aiAppName, useAi, useAiApp } from '../components/Ai.tsx';
 import { CalendarSettingsDialog } from '../components/Calendar.tsx';
 import { UnlockDialog, profileKey } from '../components/dialogs.tsx';
 import { Icon, type IconName } from '../components/icons.tsx';
@@ -396,6 +396,7 @@ export function ProfilePage() {
   const mailEnabled = useStore((s) => s.config?.mail);
   const mailUnread = useStore((s) => s.mailUnread);
   const ai = useAi();
+  const aiApp = useAiApp();
   const navigate = useNavigate();
   const { setMe, setTheme, switchWorld, logout, error, toast, openShare } = useStore.getState();
   const [dialog, setDialog] = useState<
@@ -501,8 +502,14 @@ export function ProfilePage() {
             <Row
               icon="sparkles"
               label={t('ai_mine')}
-              hint={ai ? t('ai_connected_to', { provider: ai.provider === 'custom' ? t('ai_provider_custom') : PROVIDERS[ai.provider].label }) : t('ai_mine_hint')}
-              onClick={() => (ai ? navigate('/assistant') : setDialog('ai'))}
+              hint={
+                ai
+                  ? t('ai_connected_to', { provider: ai.provider === 'custom' ? t('ai_provider_custom') : PROVIDERS[ai.provider].label })
+                  : aiApp
+                    ? t('ai_app_connected', { app: aiAppName(aiApp, t) })
+                    : t('ai_mine_hint')
+              }
+              onClick={() => (ai || aiApp ? navigate('/assistant') : setDialog('ai'))}
             />
             <Row icon="calendar" label={t('cal_mine')} hint={calendars.length ? t('cal_connected_n', { n: calendars.length }) : t('cal_mine_hint')} onClick={() => setDialog('calendar')} />
             {mailEnabled !== false && (

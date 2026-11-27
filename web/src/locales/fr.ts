@@ -593,4 +593,22 @@ export const fr = {
   err_private_group: 'Ce groupe est privé : seuls ses membres peuvent le lire.',
   err_request_not_found: 'Cette demande n’existe plus.',
   err_must_stay_public: 'Ce groupe doit rester public.',
+
+  // my AI without a key (relay mode)
+  ai_app_title: 'Sans clé : mon application d’IA',
+  ai_app_text: 'OlimTalk prépare la demande et ouvre l’application que vous utilisez déjà, avec votre propre compte. Aucune clé, aucun coût en plus ; la réponse se lit dans cette application.',
+  ai_app_other: 'Autre application',
+  ai_app_saved: 'Vos demandes s’ouvriront dans {app}',
+  ai_app_connected: 'Sans clé : {app}',
+  ai_app_assistant: 'Votre question s’ouvrira dans {app}, avec votre propre compte.',
+  ai_open_app: 'Ouvrir dans {app}',
+  ai_relay_copied: 'Demande copiée. Collez-la dans {app} si elle n’y apparaît pas.',
+  ai_relay_copied_other: 'Demande copiée : collez-la dans votre application d’IA.',
+  ai_api_title: 'Avec une clé API : réponses dans OlimTalk',
+  ai_api_text: 'Nécessaire pour lire les réponses ici, réécrire vos messages et traduire automatiquement avec votre IA.',
+  tr_private_ask_app: 'Ou bien, sans rien envoyer à OlimTalk : ouvrez ce message dans votre application d’IA.',
+  relay_translate: 'Traduis ce message en français. Réponds uniquement avec la traduction.\n\n{text}',
+  relay_explain: 'Je vis en Israël depuis peu. Explique-moi simplement, en français, ce message que j’ai reçu : de quoi il s’agit, ce qu’on me demande, les dates, montants ou références, et ce que je dois faire. Traduis les mots en hébreu importants.\n\n{text}',
+  relay_summarize: 'Résume en français cette discussion de groupe pour quelqu’un qui était absent : sujets principaux, décisions, dates, lieux et questions restées sans réponse.\n\n{text}',
+  relay_ask: '{text}',
 };

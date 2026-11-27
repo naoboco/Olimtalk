@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AiSettingsDialog, aiErrorText, useAi } from '../components/Ai.tsx';
+import { AiSettingsDialog, aiAppName, aiErrorText, relayToAiApp, useAi, useAiApp } from '../components/Ai.tsx';
 import { Icon } from '../components/icons.tsx';
 import { Empty, IconButton, Spinner } from '../components/ui.tsx';
 import { PROVIDERS, assistantSystem, complete, type ChatTurn } from '../lib/ai/index.ts';
@@ -16,6 +16,7 @@ export default function AssistantPage() {
   const t = useT();
   const navigate = useNavigate();
   const ai = useAi();
+  const aiApp = useAiApp();
   const lang = useStore((s) => s.lang);
   const [turns, setTurns] = useState<ChatTurn[]>(memory);
   const [draft, setDraft] = useState('');
@@ -36,7 +37,16 @@ export default function AssistantPage() {
   useEffect(() => () => abort.current?.abort(), []);
 
   const ask = async (question: string) => {
-    if (!ai || !question.trim() || answer !== null) return;
+    if (!question.trim()) return;
+    if (!ai) {
+      // Relay mode: the question opens in the person's own AI application.
+      if (aiApp) {
+        setDraft('');
+        await relayToAiApp(aiApp, 'relay_ask', question, t);
+      }
+      return;
+    }
+    if (answer !== null) return;
     const next: ChatTurn[] = [...turns, { role: 'user', content: question.trim() }];
     setTurns(next);
     setDraft('');
@@ -69,7 +79,38 @@ export default function AssistantPage() {
         {turns.length > 0 && <IconButton icon="refresh" label={t('ai_new_chat')} onClick={() => (abort.current?.abort(), setTurns([]), setProblem(''))} />}
         <IconButton icon="edit" label={t('ai_mine')} onClick={() => setSettings(true)} />
       </header>
-      {!ai ? (
+      {!ai && aiApp ? (
+        <>
+          <div className="page-scroll">
+            <div className="page-inner narrow assistant">
+              <div className="assistant-intro">
+                <span className="hero-emoji">✨</span>
+                <h2>{t('ai_hello')}</h2>
+                <p className="muted">{t('ai_app_assistant', { app: aiAppName(aiApp, t) })}</p>
+                <div className="assistant-suggestions">
+                  {suggestions.map((s) => (
+                    <button key={s} type="button" className="chip" onClick={() => void ask(s)}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          <form
+            className="composer assistant-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void ask(draft);
+            }}
+          >
+            <textarea rows={1} dir="auto" value={draft} placeholder={t('ai_ask')} aria-label={t('ai_ask')} onChange={(e) => setDraft(e.target.value)} />
+            <button type="submit" className="send-btn" disabled={!draft.trim()} aria-label={t('ai_open_app', { app: aiAppName(aiApp, t) })}>
+              <Icon name="external" size={20} />
+            </button>
+          </form>
+        </>
+      ) : !ai ? (
         <Empty emoji="✨" title={t('ai_connect_title')} text={t('ai_connect_text')}>
           <button type="button" className="btn primary" onClick={() => setSettings(true)}>
             <Icon name="sparkles" size={18} /> {t('ai_connect')}

@@ -3838,3 +3838,11 @@ button.tr-note:hover {
 .banner.as-button svg {
   flex: none;
 }
+
+/* my AI without a key (relay mode) */
+.ai-apps {
+  margin: 8px 0 4px;
+}
+.modal-body > .section-title.spaced {
+  margin-top: 20px;
+}

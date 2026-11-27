@@ -594,4 +594,22 @@ export const en: Dict = {
   err_private_group: 'This group is private: only its members can read it.',
   err_request_not_found: 'This request no longer exists.',
   err_must_stay_public: 'This group has to stay public.',
+
+  // my AI without a key (relay mode)
+  ai_app_title: 'No key: my AI app',
+  ai_app_text: 'OlimTalk writes the request and opens the app you already use, with your own account. No key, no extra cost; the answer is read in that app.',
+  ai_app_other: 'Another app',
+  ai_app_saved: 'Your requests will open in {app}',
+  ai_app_connected: 'No key: {app}',
+  ai_app_assistant: 'Your question will open in {app}, with your own account.',
+  ai_open_app: 'Open in {app}',
+  ai_relay_copied: 'Request copied. Paste it into {app} if it does not appear there.',
+  ai_relay_copied_other: 'Request copied: paste it into your AI app.',
+  ai_api_title: 'With an API key: answers inside OlimTalk',
+  ai_api_text: 'Needed to read answers here, rewrite your messages and translate automatically with your AI.',
+  tr_private_ask_app: 'Or, without sending anything to OlimTalk: open this message in your AI app.',
+  relay_translate: 'Translate this message into English. Reply with the translation only.\n\n{text}',
+  relay_explain: 'I recently moved to Israel. Explain in plain English this message I received: what it is about, what is asked of me, any dates, amounts or references, and what I should do. Translate the important Hebrew words.\n\n{text}',
+  relay_summarize: 'Summarise this group chat in English for someone who was away: main topics, decisions, dates, places and unanswered questions.\n\n{text}',
+  relay_ask: '{text}',
 };

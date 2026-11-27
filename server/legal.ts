@@ -109,7 +109,11 @@ nous n'utilisons aucun traceur publicitaire.</p>
 
 <h2>Vos connexions (facultatives)</h2>
 <ul>
-  <li><strong>Votre IA</strong> : si vous branchez votre propre assistant (Claude, ChatGPT, Gemini, Mistral ou autre), votre clé
+  <li><strong>Votre IA, sans clé</strong> : si vous choisissez d'ouvrir vos demandes dans votre propre application d'IA (ChatGPT,
+      Claude, Gemini…), le texte concerné (un message à traduire ou à expliquer, une discussion à résumer, un e-mail) est copié
+      et transmis à cette application, à votre demande et à chaque fois par un geste de votre part. Il est alors traité selon
+      les conditions de cette application. OlimTalk ne le reçoit pas.</li>
+  <li><strong>Votre IA, avec une clé</strong> : si vous branchez votre propre assistant (Claude, ChatGPT, Gemini, Mistral ou autre), votre clé
       d'accès est enregistrée chiffrée par votre mot de passe ; nous ne pouvons pas la lire. Les textes que vous lui soumettez
       (un message à traduire, un e-mail à expliquer, une discussion à résumer) partent de votre appareil directement vers le
       fournisseur que vous avez choisi, selon ses propres conditions. OlimTalk ne les reçoit pas.</li>
@@ -193,7 +197,11 @@ only by their members. We do not sell your data, we show no advertising and we u
 
 <h2>Your connections (optional)</h2>
 <ul>
-  <li><strong>Your AI</strong>: if you plug in your own assistant (Claude, ChatGPT, Gemini, Mistral or another), your access key
+  <li><strong>Your AI, without a key</strong>: if you choose to open your requests in your own AI app (ChatGPT, Claude, Gemini…),
+      the text concerned (a message to translate or explain, a chat to summarise, an e-mail) is copied and handed to that app,
+      at your request and each time by an action of yours. It is then handled under that app's own terms. OlimTalk does not
+      receive it.</li>
+  <li><strong>Your AI, with a key</strong>: if you plug in your own assistant (Claude, ChatGPT, Gemini, Mistral or another), your access key
       is stored encrypted by your password; we cannot read it. The texts you submit to it (a message to translate, an e-mail to
       explain, a chat to summarise) go from your device straight to the provider you chose, under that provider's own terms.
       OlimTalk does not receive them.</li>
